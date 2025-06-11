@@ -46,19 +46,23 @@ async function initializeDocker() {
       { host: 'localhost', port: 2376, protocol: 'https' }
     );
   } else {
-    dockerOptions.push(
-      { socketPath: '/var/run/docker.sock' },
-      { host: 'localhost', port: 2375 },
-      { socketPath: process.env.DOCKER_HOST?.replace('unix://', '') }
-    ).filter(option => option.socketPath !== undefined);
+    // Add Unix socket options
+    dockerOptions.push({ socketPath: '/var/run/docker.sock' });
+    dockerOptions.push({ host: 'localhost', port: 2375 });
+    
+    // Add custom DOCKER_HOST socket if provided and valid
+    if (process.env.DOCKER_HOST && process.env.DOCKER_HOST.startsWith('unix://')) {
+      const socketPath = process.env.DOCKER_HOST.replace('unix://', '');
+      if (socketPath) {
+        dockerOptions.push({ socketPath });
+      }
+    }
   }
 
   // Add custom DOCKER_HOST if provided
   if (process.env.DOCKER_HOST) {
     if (process.env.DOCKER_HOST.startsWith('npipe://')) {
       dockerOptions.unshift({ socketPath: process.env.DOCKER_HOST.replace('npipe://', '') });
-    } else if (process.env.DOCKER_HOST.startsWith('unix://')) {
-      dockerOptions.unshift({ socketPath: process.env.DOCKER_HOST.replace('unix://', '') });
     } else if (process.env.DOCKER_HOST.startsWith('tcp://')) {
       const url = new URL(process.env.DOCKER_HOST);
       dockerOptions.unshift({ 
