@@ -32,7 +32,7 @@ COPY --from=builder /app/dist ./dist
 COPY server ./server
 
 # Create directories
-RUN mkdir -p /app/data /app/caddy/smartdock
+RUN mkdir -p /app/data
 
 # Set proper permissions for Docker socket access
 RUN addgroup -g 999 docker || true
