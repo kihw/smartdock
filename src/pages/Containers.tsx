@@ -5,40 +5,25 @@ import {
   Play,
   Square,
   RotateCcw,
-  Trash2,
-  Settings,
-  Activity,
-  Clock,
-  Cpu,
-  HardDrive,
-  Network,
-  MoreVertical,
-  Zap
+  Plus,
+  Filter,
+  Search,
+  Grid,
+  List
 } from 'lucide-react';
 import { useApi, useApiMutation } from '../hooks/useApi';
 import { useNotifications } from '../utils/notifications';
-import { LoadingSpinner, LoadingOverlay } from '../components/LoadingSpinner';
+import { LoadingSpinner } from '../components/LoadingSpinner';
 import { SmartWakeUpModal } from '../components/SmartWakeUpModal';
+import { ContainerCard } from '../components/ContainerCard';
+import { QuickActions, containerActions } from '../components/QuickActions';
 import { Container as ContainerType } from '../types';
-
-const statusColors = {
-  running: 'bg-green-100 text-green-800 border-green-200',
-  stopped: 'bg-red-100 text-red-800 border-red-200',
-  restarting: 'bg-yellow-100 text-yellow-800 border-yellow-200',
-  paused: 'bg-blue-100 text-blue-800 border-blue-200',
-  exited: 'bg-gray-100 text-gray-800 border-gray-200'
-};
-
-const statusIcons = {
-  running: Activity,
-  stopped: Square,
-  restarting: RotateCcw,
-  paused: Clock,
-  exited: Square
-};
 
 export const Containers: React.FC = () => {
   const [selectedContainers, setSelectedContainers] = useState<string[]>([]);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [statusFilter, setStatusFilter] = useState<string>('all');
+  const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
   const [wakeUpModal, setWakeUpModal] = useState<{
     isOpen: boolean;
     container?: ContainerType;
@@ -47,7 +32,7 @@ export const Containers: React.FC = () => {
   const { data: containers, loading, error, refetch } = useApi<ContainerType[]>('/containers');
   const { success, error: notifyError } = useNotifications();
 
-  // Mutations for container actions - utilisation correcte
+  // Mutations for container actions
   const startMutation = useApiMutation('', 'POST');
   const stopMutation = useApiMutation('', 'POST');
   const restartMutation = useApiMutation('', 'POST');
@@ -127,6 +112,19 @@ export const Containers: React.FC = () => {
     }
   };
 
+  // Filter containers based on search and status
+  const filteredContainers = containers?.filter(container => {
+    const matchesSearch = container.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                         container.image.toLowerCase().includes(searchTerm.toLowerCase());
+    const matchesStatus = statusFilter === 'all' || container.status === statusFilter;
+    return matchesSearch && matchesStatus;
+  }) || [];
+
+  const statusCounts = containers?.reduce((acc, container) => {
+    acc[container.status] = (acc[container.status] || 0) + 1;
+    return acc;
+  }, {} as Record<string, number>) || {};
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -176,175 +174,136 @@ export const Containers: React.FC = () => {
         
         <div className="flex space-x-3">
           <button className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md transition-colors duration-200 flex items-center space-x-2">
-            <Container className="h-4 w-4" />
+            <Plus className="h-4 w-4" />
             <span>Nouveau Conteneur</span>
           </button>
-          {selectedContainers.length > 0 && (
-            <div className="flex space-x-2">
-              <button
-                onClick={() => handleAction('start-multiple')}
-                className="bg-green-600 hover:bg-green-700 text-white px-3 py-2 rounded-md transition-colors duration-200"
-              >
-                <Play className="h-4 w-4" />
-              </button>
-              <button
-                onClick={() => handleAction('stop-multiple')}
-                className="bg-red-600 hover:bg-red-700 text-white px-3 py-2 rounded-md transition-colors duration-200"
-              >
-                <Square className="h-4 w-4" />
-              </button>
-            </div>
-          )}
         </div>
       </div>
 
-      {/* Containers Grid */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
-        {containers.map((container, index) => {
-          const StatusIcon = statusIcons[container.status] || Square;
-          const isLoading = startMutation.loading || stopMutation.loading || restartMutation.loading;
-          
-          return (
-            <motion.div
-              key={container.id}
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.5, delay: index * 0.1 }}
-              className={`bg-gray-800 border rounded-lg overflow-hidden shadow-lg hover:shadow-xl transition-all duration-200 ${
-                selectedContainers.includes(container.id)
-                  ? 'border-blue-500 ring-2 ring-blue-500 ring-opacity-50'
-                  : 'border-gray-700 hover:border-gray-600'
+      {/* Filters and Search */}
+      <div className="bg-gray-800 rounded-lg border border-gray-700 p-4">
+        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between space-y-4 lg:space-y-0">
+          <div className="flex flex-col sm:flex-row space-y-2 sm:space-y-0 sm:space-x-4">
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
+              <input
+                type="text"
+                placeholder="Rechercher des conteneurs..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="pl-10 pr-4 py-2 bg-gray-700 border border-gray-600 rounded-md text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+            
+            <select
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value)}
+              className="px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              <option value="all">Tous les statuts ({containers.length})</option>
+              <option value="running">En cours ({statusCounts.running || 0})</option>
+              <option value="stopped">Arrêtés ({statusCounts.stopped || 0})</option>
+              <option value="exited">Sortis ({statusCounts.exited || 0})</option>
+              <option value="paused">En pause ({statusCounts.paused || 0})</option>
+            </select>
+          </div>
+
+          <div className="flex items-center space-x-2">
+            <button
+              onClick={() => setViewMode('grid')}
+              className={`p-2 rounded-md transition-colors duration-200 ${
+                viewMode === 'grid' ? 'bg-blue-600 text-white' : 'bg-gray-700 text-gray-400 hover:text-white'
               }`}
             >
-              <LoadingOverlay loading={isLoading} text="Action en cours...">
-                <div className="p-6">
-                  <div className="flex items-center justify-between mb-4">
-                    <div className="flex items-center space-x-3">
-                      <input
-                        type="checkbox"
-                        checked={selectedContainers.includes(container.id)}
-                        onChange={() => toggleContainer(container.id)}
-                        className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
-                      />
-                      <Container className="h-6 w-6 text-blue-400" />
-                      <div>
-                        <h3 className="text-lg font-semibold text-white">{container.name}</h3>
-                        <p className="text-sm text-gray-400">{container.image}</p>
-                      </div>
-                    </div>
-                    <button className="text-gray-400 hover:text-white">
-                      <MoreVertical className="h-5 w-5" />
-                    </button>
-                  </div>
-
-                  <div className="mb-4">
-                    <div className="flex items-center space-x-2">
-                      <span
-                        className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium border ${
-                          statusColors[container.status] || statusColors.exited
-                        }`}
-                      >
-                        <StatusIcon className="h-3 w-3 mr-1" />
-                        {container.status}
-                      </span>
-                      {container.smartWakeUp && (
-                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800 border border-purple-200">
-                          <Zap className="h-3 w-3 mr-1" />
-                          Smart Wake-Up
-                        </span>
-                      )}
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-4 mb-4 text-sm">
-                    <div className="flex items-center text-gray-400">
-                      <Clock className="h-4 w-4 mr-2" />
-                      <span>{container.uptime || '-'}</span>
-                    </div>
-                    <div className="flex items-center text-gray-400">
-                      <Cpu className="h-4 w-4 mr-2" />
-                      <span>{container.cpu?.toFixed(1) || 0}%</span>
-                    </div>
-                    <div className="flex items-center text-gray-400">
-                      <HardDrive className="h-4 w-4 mr-2" />
-                      <span>{container.memory || '0 B'}</span>
-                    </div>
-                    <div className="flex items-center text-gray-400">
-                      <Network className="h-4 w-4 mr-2" />
-                      <span>{container.ports?.length || 0} ports</span>
-                    </div>
-                  </div>
-
-                  <div className="mb-4">
-                    <div className="text-xs text-gray-400 mb-1">Ports:</div>
-                    <div className="flex flex-wrap gap-1">
-                      {(container.ports || []).slice(0, 3).map((port, idx) => (
-                        <span
-                          key={idx}
-                          className="inline-block bg-gray-700 text-gray-300 text-xs px-2 py-1 rounded"
-                        >
-                          {port.publicPort ? `${port.publicPort}:${port.privatePort}` : port.privatePort}
-                        </span>
-                      ))}
-                      {(container.ports?.length || 0) > 3 && (
-                        <span className="inline-block bg-gray-700 text-gray-300 text-xs px-2 py-1 rounded">
-                          +{(container.ports?.length || 0) - 3}
-                        </span>
-                      )}
-                    </div>
-                  </div>
-
-                  <div className="flex space-x-2">
-                    {container.status === 'running' ? (
-                      <button
-                        onClick={() => handleAction('stop', container.id)}
-                        disabled={isLoading}
-                        className="flex-1 bg-red-600 hover:bg-red-700 disabled:bg-gray-600 text-white py-2 px-3 rounded-md transition-colors duration-200 flex items-center justify-center space-x-1"
-                      >
-                        <Square className="h-4 w-4" />
-                        <span>Arrêter</span>
-                      </button>
-                    ) : (
-                      <>
-                        <button
-                          onClick={() => handleAction('start', container.id)}
-                          disabled={isLoading}
-                          className="flex-1 bg-green-600 hover:bg-green-700 disabled:bg-gray-600 text-white py-2 px-3 rounded-md transition-colors duration-200 flex items-center justify-center space-x-1"
-                        >
-                          <Play className="h-4 w-4" />
-                          <span>Démarrer</span>
-                        </button>
-                        {container.smartWakeUp && (
-                          <button
-                            onClick={() => handleAction('smart-wakeup', container.id)}
-                            className="bg-purple-600 hover:bg-purple-700 text-white py-2 px-3 rounded-md transition-colors duration-200"
-                            title="Smart Wake-Up"
-                          >
-                            <Zap className="h-4 w-4" />
-                          </button>
-                        )}
-                      </>
-                    )}
-                    <button
-                      onClick={() => handleAction('restart', container.id)}
-                      disabled={isLoading}
-                      className="bg-orange-600 hover:bg-orange-700 disabled:bg-gray-600 text-white py-2 px-3 rounded-md transition-colors duration-200"
-                    >
-                      <RotateCcw className="h-4 w-4" />
-                    </button>
-                    <button
-                      onClick={() => handleAction('settings', container.id)}
-                      className="bg-gray-600 hover:bg-gray-700 text-white py-2 px-3 rounded-md transition-colors duration-200"
-                    >
-                      <Settings className="h-4 w-4" />
-                    </button>
-                  </div>
-                </div>
-              </LoadingOverlay>
-            </motion.div>
-          );
-        })}
+              <Grid className="h-4 w-4" />
+            </button>
+            <button
+              onClick={() => setViewMode('list')}
+              className={`p-2 rounded-md transition-colors duration-200 ${
+                viewMode === 'list' ? 'bg-blue-600 text-white' : 'bg-gray-700 text-gray-400 hover:text-white'
+              }`}
+            >
+              <List className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
       </div>
+
+      {/* Quick Actions for Selected Containers */}
+      {selectedContainers.length > 0 && (
+        <motion.div
+          initial={{ opacity: 0, y: -20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="bg-blue-600/10 border border-blue-500/30 rounded-lg p-4"
+        >
+          <div className="flex items-center justify-between">
+            <span className="text-white font-medium">
+              {selectedContainers.length} conteneur(s) sélectionné(s)
+            </span>
+            <QuickActions
+              actions={[
+                {
+                  id: 'start-selected',
+                  label: 'Démarrer',
+                  icon: Play,
+                  color: 'bg-green-600',
+                  hoverColor: 'hover:bg-green-700',
+                  action: () => console.log('Start selected containers')
+                },
+                {
+                  id: 'stop-selected',
+                  label: 'Arrêter',
+                  icon: Square,
+                  color: 'bg-red-600',
+                  hoverColor: 'hover:bg-red-700',
+                  action: () => console.log('Stop selected containers')
+                },
+                {
+                  id: 'restart-selected',
+                  label: 'Redémarrer',
+                  icon: RotateCcw,
+                  color: 'bg-orange-600',
+                  hoverColor: 'hover:bg-orange-700',
+                  action: () => console.log('Restart selected containers')
+                }
+              ]}
+              layout="horizontal"
+              size="sm"
+            />
+          </div>
+        </motion.div>
+      )}
+
+      {/* Containers Grid/List */}
+      <div className={
+        viewMode === 'grid' 
+          ? 'grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6'
+          : 'space-y-4'
+      }>
+        {filteredContainers.map((container, index) => (
+          <ContainerCard
+            key={container.id}
+            container={container}
+            isSelected={selectedContainers.includes(container.id)}
+            isLoading={startMutation.loading || stopMutation.loading || restartMutation.loading}
+            onToggleSelect={() => toggleContainer(container.id)}
+            onAction={(action) => handleAction(action, container.id)}
+          />
+        ))}
+      </div>
+
+      {filteredContainers.length === 0 && searchTerm && (
+        <div className="text-center py-12">
+          <Search className="h-12 w-12 text-gray-400 mx-auto mb-4" />
+          <div className="text-gray-400 mb-2">Aucun conteneur trouvé pour "{searchTerm}"</div>
+          <button 
+            onClick={() => setSearchTerm('')}
+            className="text-blue-400 hover:text-blue-300 text-sm"
+          >
+            Effacer la recherche
+          </button>
+        </div>
+      )}
 
       {/* Smart Wake-Up Modal */}
       <SmartWakeUpModal

@@ -15,6 +15,9 @@ export interface Container {
   labels: Record<string, string>;
   networks: string[];
   mounts: Mount[];
+  healthStatus?: 'healthy' | 'unhealthy' | 'starting' | 'none';
+  restartPolicy?: string;
+  environment?: Record<string, string>;
 }
 
 export interface Port {
@@ -46,6 +49,8 @@ export interface Stack {
   lastDeploy: string;
   composeFile: string;
   environment: Record<string, string>;
+  networks?: string[];
+  volumes?: Volume[];
 }
 
 export interface Service {
@@ -56,6 +61,22 @@ export interface Service {
   replicas: number;
   ports: Port[];
   healthCheck?: HealthCheck;
+  resources?: ServiceResources;
+}
+
+export interface ServiceResources {
+  cpuLimit?: string;
+  memoryLimit?: string;
+  cpuReservation?: string;
+  memoryReservation?: string;
+}
+
+export interface Volume {
+  name: string;
+  driver: string;
+  mountpoint: string;
+  scope: string;
+  labels?: Record<string, string>;
 }
 
 export interface HealthCheck {
@@ -79,6 +100,14 @@ export interface ProxyRule {
   lastCheck: string;
   healthCheck: boolean;
   redirects?: Redirect[];
+  middleware?: string[];
+  rateLimit?: RateLimit;
+}
+
+export interface RateLimit {
+  enabled: boolean;
+  requests: number;
+  window: string;
 }
 
 export interface Redirect {
@@ -101,6 +130,13 @@ export interface Schedule {
   nextRun: string;
   status: 'active' | 'inactive' | 'error' | 'running';
   conditions?: Condition[];
+  notifications?: NotificationConfig;
+}
+
+export interface NotificationConfig {
+  onSuccess: boolean;
+  onFailure: boolean;
+  channels: string[];
 }
 
 export interface Condition {
@@ -122,6 +158,8 @@ export interface Update {
   description: string;
   changelog?: string;
   size?: number;
+  securityUpdate?: boolean;
+  rollbackAvailable?: boolean;
 }
 
 export interface SystemStats {
@@ -150,12 +188,42 @@ export interface SystemStats {
       percentage: number;
     };
     uptime: string;
+    load?: number[];
   };
   docker: {
     version: string;
     apiVersion: string;
     status: 'connected' | 'disconnected' | 'error';
+    info?: DockerInfo;
   };
+  network?: NetworkStats;
+}
+
+export interface DockerInfo {
+  containers: number;
+  containersRunning: number;
+  containersStopped: number;
+  images: number;
+  serverVersion: string;
+  kernelVersion: string;
+  operatingSystem: string;
+  architecture: string;
+  memTotal: number;
+  swapTotal: number;
+}
+
+export interface NetworkStats {
+  interfaces: NetworkInterface[];
+  totalBytesReceived: number;
+  totalBytesSent: number;
+}
+
+export interface NetworkInterface {
+  name: string;
+  bytesReceived: number;
+  bytesSent: number;
+  packetsReceived: number;
+  packetsSent: number;
 }
 
 export interface Activity {
@@ -167,6 +235,8 @@ export interface Activity {
   timestamp: string;
   status: 'success' | 'error' | 'warning' | 'info';
   details?: Record<string, any>;
+  user?: string;
+  duration?: number;
 }
 
 export interface Settings {
@@ -175,6 +245,7 @@ export interface Settings {
     apiVersion: string;
     tlsVerify: boolean;
     certPath?: string;
+    timeout: number;
   };
   proxy: {
     enabled: boolean;
@@ -183,12 +254,14 @@ export interface Settings {
     mainDomain: string;
     autoSSL: boolean;
     forceHTTPS: boolean;
+    defaultHeaders?: Record<string, string>;
   };
   smartWakeUp: {
     enabled: boolean;
     timeout: number;
     retries: number;
     healthCheckInterval: number;
+    gracePeriod: number;
   };
   notifications: {
     email: {
@@ -206,10 +279,19 @@ export interface Settings {
     discord: {
       enabled: boolean;
       webhookUrl: string;
+      username?: string;
+      avatar?: string;
     };
     slack: {
       enabled: boolean;
       webhookUrl: string;
+      channel?: string;
+      username?: string;
+    };
+    pushover: {
+      enabled: boolean;
+      userKey: string;
+      appToken: string;
     };
   };
   security: {
@@ -221,6 +303,10 @@ export interface Settings {
       maxRequests: number;
       windowMs: number;
     };
+    cors: {
+      enabled: boolean;
+      origins: string[];
+    };
   };
   updates: {
     autoCheck: boolean;
@@ -228,6 +314,23 @@ export interface Settings {
     autoUpdate: boolean;
     updateSchedule: string;
     excludeImages: string[];
+    backupBeforeUpdate: boolean;
+  };
+  monitoring: {
+    enabled: boolean;
+    metricsRetention: string;
+    alertThresholds: {
+      cpu: number;
+      memory: number;
+      disk: number;
+    };
+  };
+  backup: {
+    enabled: boolean;
+    schedule: string;
+    retention: number;
+    destination: string;
+    compression: boolean;
   };
 }
 
@@ -237,6 +340,14 @@ export interface ApiResponse<T = any> {
   error?: string;
   message?: string;
   timestamp: string;
+  meta?: ResponseMeta;
+}
+
+export interface ResponseMeta {
+  version: string;
+  requestId: string;
+  executionTime: number;
+  cached?: boolean;
 }
 
 export interface PaginatedResponse<T> extends ApiResponse<T[]> {
@@ -245,5 +356,151 @@ export interface PaginatedResponse<T> extends ApiResponse<T[]> {
     limit: number;
     total: number;
     totalPages: number;
+    hasNext: boolean;
+    hasPrev: boolean;
   };
+}
+
+export interface WebSocketMessage {
+  event: string;
+  data: any;
+  timestamp: string;
+  id?: string;
+}
+
+export interface Notification {
+  id: string;
+  title: string;
+  message: string;
+  type: 'success' | 'error' | 'warning' | 'info';
+  timestamp: string;
+  read: boolean;
+  actions?: NotificationAction[];
+}
+
+export interface NotificationAction {
+  label: string;
+  action: string;
+  style: 'primary' | 'secondary' | 'danger';
+}
+
+export interface Theme {
+  name: string;
+  colors: {
+    primary: string;
+    secondary: string;
+    accent: string;
+    background: string;
+    surface: string;
+    text: string;
+    textSecondary: string;
+    border: string;
+    success: string;
+    warning: string;
+    error: string;
+    info: string;
+  };
+  fonts: {
+    primary: string;
+    mono: string;
+  };
+  spacing: {
+    xs: string;
+    sm: string;
+    md: string;
+    lg: string;
+    xl: string;
+  };
+}
+
+export interface User {
+  id: string;
+  username: string;
+  email: string;
+  role: 'admin' | 'user' | 'viewer';
+  permissions: string[];
+  lastLogin: string;
+  preferences: UserPreferences;
+}
+
+export interface UserPreferences {
+  theme: 'dark' | 'light' | 'auto';
+  language: string;
+  timezone: string;
+  notifications: {
+    email: boolean;
+    push: boolean;
+    desktop: boolean;
+  };
+  dashboard: {
+    layout: string;
+    widgets: string[];
+  };
+}
+
+export interface Metric {
+  name: string;
+  value: number;
+  unit: string;
+  timestamp: string;
+  labels?: Record<string, string>;
+}
+
+export interface Alert {
+  id: string;
+  name: string;
+  description: string;
+  severity: 'low' | 'medium' | 'high' | 'critical';
+  status: 'active' | 'resolved' | 'suppressed';
+  timestamp: string;
+  source: string;
+  conditions: AlertCondition[];
+  actions: AlertAction[];
+}
+
+export interface AlertCondition {
+  metric: string;
+  operator: 'gt' | 'lt' | 'eq' | 'gte' | 'lte';
+  threshold: number;
+  duration: string;
+}
+
+export interface AlertAction {
+  type: 'email' | 'webhook' | 'script';
+  config: Record<string, any>;
+}
+
+export interface Backup {
+  id: string;
+  name: string;
+  type: 'full' | 'incremental' | 'differential';
+  status: 'running' | 'completed' | 'failed' | 'cancelled';
+  size: number;
+  timestamp: string;
+  duration: number;
+  includes: string[];
+  excludes: string[];
+  destination: string;
+}
+
+export interface LogEntry {
+  id: string;
+  timestamp: string;
+  level: 'debug' | 'info' | 'warn' | 'error' | 'fatal';
+  source: string;
+  message: string;
+  metadata?: Record<string, any>;
+  tags?: string[];
+}
+
+export interface Plugin {
+  id: string;
+  name: string;
+  version: string;
+  description: string;
+  author: string;
+  enabled: boolean;
+  config: Record<string, any>;
+  permissions: string[];
+  dependencies: string[];
 }
