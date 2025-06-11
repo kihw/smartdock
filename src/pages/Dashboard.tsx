@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { motion } from 'framer-motion';
 import {
   Container,
@@ -11,90 +11,156 @@ import {
   Shield,
   RefreshCw
 } from 'lucide-react';
-
-const stats = [
-  {
-    name: 'Conteneurs Actifs',
-    value: '12',
-    change: '+2',
-    changeType: 'positive',
-    icon: Container,
-    color: 'text-green-400'
-  },
-  {
-    name: 'Stacks Déployées',
-    value: '4',
-    change: '0',
-    changeType: 'neutral',
-    icon: Layers,
-    color: 'text-blue-400'
-  },
-  {
-    name: 'Domaines Configurés',
-    value: '8',
-    change: '+1',
-    changeType: 'positive',
-    icon: Globe,
-    color: 'text-purple-400'
-  },
-  {
-    name: 'Tâches Programmées',
-    value: '6',
-    change: '+1',
-    changeType: 'positive',
-    icon: Clock,
-    color: 'text-orange-400'
-  }
-];
-
-const recentActivity = [
-  {
-    id: 1,
-    type: 'start',
-    message: 'Conteneur web-app démarré via Smart Wake-Up',
-    time: '2 min',
-    icon: Zap,
-    color: 'text-green-400'
-  },
-  {
-    id: 2,
-    type: 'update',
-    message: 'Mise à jour automatique de nginx:latest',
-    time: '15 min',
-    icon: TrendingUp,
-    color: 'text-blue-400'
-  },
-  {
-    id: 3,
-    type: 'proxy',
-    message: 'Nouveau sous-domaine api.example.com configuré',
-    time: '1h',
-    icon: Globe,
-    color: 'text-purple-400'
-  },
-  {
-    id: 4,
-    type: 'security',
-    message: 'Scan de sécurité terminé - 0 vulnérabilité',
-    time: '2h',
-    icon: Shield,
-    color: 'text-green-400'
-  }
-];
+import { useApi } from '../hooks/useApi';
+import { useWebSocket } from '../hooks/useWebSocket';
+import { useNotifications } from '../utils/notifications';
+import { LoadingSpinner } from '../components/LoadingSpinner';
+import { SystemStats } from '../types';
 
 export const Dashboard: React.FC = () => {
+  const { data: stats, loading, error, refetch } = useApi<SystemStats>('/system/stats');
+  const { success, error: notifyError } = useNotifications();
+
+  // WebSocket for real-time updates
+  const { isConnected, lastMessage } = useWebSocket('/ws', {
+    onMessage: (data) => {
+      if (data.type === 'container:started') {
+        success('Conteneur démarré', `Le conteneur ${data.containerName} a été démarré avec succès`);
+        refetch();
+      } else if (data.type === 'container:stopped') {
+        notifyError('Conteneur arrêté', `Le conteneur ${data.containerName} a été arrêté`);
+        refetch();
+      }
+    },
+    onConnect: () => {
+      console.log('Connected to WebSocket');
+    },
+    onDisconnect: () => {
+      console.log('Disconnected from WebSocket');
+    }
+  });
+
+  const statsCards = stats ? [
+    {
+      name: 'Conteneurs Actifs',
+      value: stats.containers.running.toString(),
+      total: stats.containers.total,
+      change: '+2',
+      changeType: 'positive' as const,
+      icon: Container,
+      color: 'text-green-400'
+    },
+    {
+      name: 'Stacks Déployées',
+      value: stats.stacks.running.toString(),
+      total: stats.stacks.total,
+      change: '0',
+      changeType: 'neutral' as const,
+      icon: Layers,
+      color: 'text-blue-400'
+    },
+    {
+      name: 'Utilisation CPU',
+      value: `${Math.round(stats.system.cpu)}%`,
+      change: stats.system.cpu > 80 ? 'Élevé' : 'Normal',
+      changeType: stats.system.cpu > 80 ? 'negative' : 'positive',
+      icon: Activity,
+      color: 'text-purple-400'
+    },
+    {
+      name: 'Mémoire',
+      value: `${Math.round(stats.system.memory.percentage)}%`,
+      change: `${(stats.system.memory.used / (1024 * 1024 * 1024)).toFixed(1)}GB`,
+      changeType: 'neutral' as const,
+      icon: TrendingUp,
+      color: 'text-orange-400'
+    }
+  ] : [];
+
+  const recentActivity = [
+    {
+      id: 1,
+      type: 'start',
+      message: 'Conteneur web-app démarré via Smart Wake-Up',
+      time: '2 min',
+      icon: Zap,
+      color: 'text-green-400'
+    },
+    {
+      id: 2,
+      type: 'update',
+      message: 'Mise à jour automatique de nginx:latest',
+      time: '15 min',
+      icon: TrendingUp,
+      color: 'text-blue-400'
+    },
+    {
+      id: 3,
+      type: 'proxy',
+      message: 'Nouveau sous-domaine api.example.com configuré',
+      time: '1h',
+      icon: Globe,
+      color: 'text-purple-400'
+    },
+    {
+      id: 4,
+      type: 'security',
+      message: 'Scan de sécurité terminé - 0 vulnérabilité',
+      time: '2h',
+      icon: Shield,
+      color: 'text-green-400'
+    }
+  ];
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <LoadingSpinner size="lg" text="Chargement du dashboard..." />
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="text-center py-12">
+        <div className="text-red-400 mb-4">Erreur lors du chargement des données</div>
+        <button 
+          onClick={refetch}
+          className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md transition-colors duration-200"
+        >
+          Réessayer
+        </button>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold text-white">Dashboard</h1>
-        <p className="mt-2 text-gray-400">
-          Vue d'ensemble de votre infrastructure Docker
-        </p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-3xl font-bold text-white">Dashboard</h1>
+          <p className="mt-2 text-gray-400">
+            Vue d'ensemble de votre infrastructure Docker
+          </p>
+          {isConnected && (
+            <div className="flex items-center mt-2 text-sm text-green-400">
+              <div className="w-2 h-2 bg-green-400 rounded-full mr-2 animate-pulse"></div>
+              Connecté en temps réel
+            </div>
+          )}
+        </div>
+        <button
+          onClick={refetch}
+          className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md transition-colors duration-200 flex items-center space-x-2"
+        >
+          <RefreshCw className="h-4 w-4" />
+          <span>Actualiser</span>
+        </button>
       </div>
 
       {/* Stats Grid */}
       <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-4">
-        {stats.map((stat, index) => (
+        {statsCards.map((stat, index) => (
           <motion.div
             key={stat.name}
             initial={{ opacity: 0, y: 20 }}
@@ -116,12 +182,19 @@ export const Dashboard: React.FC = () => {
                       <div className="text-2xl font-semibold text-white">
                         {stat.value}
                       </div>
+                      {stat.total && (
+                        <div className="ml-2 text-sm text-gray-400">
+                          / {stat.total}
+                        </div>
+                      )}
                       {stat.change !== '0' && (
                         <div
                           className={`ml-2 flex items-baseline text-sm font-semibold ${
                             stat.changeType === 'positive'
                               ? 'text-green-400'
-                              : 'text-red-400'
+                              : stat.changeType === 'negative'
+                              ? 'text-red-400'
+                              : 'text-gray-400'
                           }`}
                         >
                           {stat.change}
@@ -151,15 +224,17 @@ export const Dashboard: React.FC = () => {
           <div className="space-y-4">
             <div className="flex items-center justify-between">
               <span className="text-gray-400">Docker Daemon</span>
-              <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
-                Actif
+              <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+                stats?.docker.status === 'connected' 
+                  ? 'bg-green-100 text-green-800' 
+                  : 'bg-red-100 text-red-800'
+              }`}>
+                {stats?.docker.status === 'connected' ? 'Connecté' : 'Déconnecté'}
               </span>
             </div>
             <div className="flex items-center justify-between">
-              <span className="text-gray-400">Proxy Caddy</span>
-              <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
-                Actif
-              </span>
+              <span className="text-gray-400">Version Docker</span>
+              <span className="text-gray-300">{stats?.docker.version}</span>
             </div>
             <div className="flex items-center justify-between">
               <span className="text-gray-400">Smart Wake-Up</span>
@@ -168,10 +243,8 @@ export const Dashboard: React.FC = () => {
               </span>
             </div>
             <div className="flex items-center justify-between">
-              <span className="text-gray-400">Mises à jour Auto</span>
-              <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800">
-                Programmé
-              </span>
+              <span className="text-gray-400">Uptime Système</span>
+              <span className="text-gray-300">{stats?.system.uptime}</span>
             </div>
           </div>
         </motion.div>

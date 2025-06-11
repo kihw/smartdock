@@ -1,0 +1,43 @@
+version: '3.8'
+
+services:
+  smartdock:
+    build: .
+    container_name: smartdock
+    ports:
+      - "3000:3000"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./data:/app/data
+      - ./caddy:/etc/caddy
+    environment:
+      - NODE_ENV=production
+      - DOCKER_HOST=unix:///var/run/docker.sock
+      - MAIN_DOMAIN=localhost
+      - API_KEY=your-secure-api-key-here
+    restart: unless-stopped
+    labels:
+      - "smartdock.wakeup=false"
+      - "smartdock.autoupdate=true"
+      - "traefik.enable=true"
+      - "traefik.http.routers.smartdock.rule=Host(`smartdock.localhost`)"
+      - "traefik.http.services.smartdock.loadbalancer.server.port=3000"
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: smartdock-proxy
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./caddy/data:/data
+      - ./caddy/config:/config
+      - ./caddy/smartdock:/etc/caddy/smartdock:ro
+    restart: unless-stopped
+    depends_on:
+      - smartdock
+
+networks:
+  default:
+    name: smartdock-network
