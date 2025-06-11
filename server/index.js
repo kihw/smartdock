@@ -1,11 +1,15 @@
-const express = require('express');
-const cors = require('cors');
-const { createServer } = require('http');
-const { Server } = require('socket.io');
-const Docker = require('dockerode');
-const fs = require('fs').promises;
-const path = require('path');
-const cron = require('node-cron');
+import express from 'express';
+import cors from 'cors';
+import { createServer } from 'http';
+import { Server } from 'socket.io';
+import Docker from 'dockerode';
+import { promises as fs } from 'fs';
+import path from 'path';
+import cron from 'node-cron';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const app = express();
 const server = createServer(app);
@@ -19,7 +23,7 @@ const io = new Server(server, {
 // Middleware
 app.use(cors());
 app.use(express.json());
-app.use(express.static('dist'));
+app.use(express.static(path.join(__dirname, '../dist')));
 
 // Docker client
 const docker = new Docker({
