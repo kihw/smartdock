@@ -32,9 +32,8 @@ COPY server ./server
 RUN addgroup -g 1001 -S nodejs
 RUN adduser -S smartdock -u 1001
 
-# Create necessary directories
-RUN mkdir -p /app/data /app/caddy/smartdock
-RUN chown -R smartdock:nodejs /app
+# Create necessary directories and set permissions
+RUN mkdir -p /app/data && chown -R smartdock:nodejs /app
 
 USER smartdock
 
