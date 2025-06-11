@@ -74,7 +74,7 @@ export function useApi<T>(
 }
 
 export function useApiMutation<T, P = any>(
-  url: string,
+  baseUrl: string,
   method: 'POST' | 'PUT' | 'DELETE' | 'PATCH' = 'POST'
 ) {
   const [state, setState] = useState<UseApiState<T>>({
@@ -83,10 +83,11 @@ export function useApiMutation<T, P = any>(
     error: null,
   });
 
-  const mutate = useCallback(async (payload?: P): Promise<T | null> => {
+  const mutate = useCallback(async (payload?: P, options?: { url?: string }): Promise<T | null> => {
     setState(prev => ({ ...prev, loading: true, error: null }));
     
     try {
+      const url = options?.url || baseUrl;
       const response = await fetch(`/api${url}`, {
         method,
         headers: {
@@ -114,7 +115,7 @@ export function useApiMutation<T, P = any>(
       setState(prev => ({ ...prev, error: errorMessage, loading: false }));
       throw error;
     }
-  }, [url, method]);
+  }, [baseUrl, method]);
 
   return {
     ...state,

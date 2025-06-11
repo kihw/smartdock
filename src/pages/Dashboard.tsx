@@ -21,14 +21,14 @@ export const Dashboard: React.FC = () => {
   const { data: stats, loading, error, refetch } = useApi<SystemStats>('/system/stats');
   const { success, error: notifyError } = useNotifications();
 
-  // WebSocket for real-time updates
-  const { isConnected, lastMessage } = useWebSocket('/ws', {
+  // WebSocket for real-time updates avec gestion d'erreur améliorée
+  const { isConnected, lastMessage } = useWebSocket('', {
     onMessage: (data) => {
-      if (data.type === 'container:started') {
-        success('Conteneur démarré', `Le conteneur ${data.containerName} a été démarré avec succès`);
+      if (data?.event === 'container:started') {
+        success('Conteneur démarré', `Le conteneur ${data.data?.containerName || 'inconnu'} a été démarré avec succès`);
         refetch();
-      } else if (data.type === 'container:stopped') {
-        notifyError('Conteneur arrêté', `Le conteneur ${data.containerName} a été arrêté`);
+      } else if (data?.event === 'container:stopped') {
+        notifyError('Conteneur arrêté', `Le conteneur ${data.data?.containerName || 'inconnu'} a été arrêté`);
         refetch();
       }
     },
@@ -37,7 +37,9 @@ export const Dashboard: React.FC = () => {
     },
     onDisconnect: () => {
       console.log('Disconnected from WebSocket');
-    }
+    },
+    maxReconnectAttempts: 3,
+    reconnectInterval: 5000
   });
 
   const statsCards = stats ? [
@@ -142,12 +144,12 @@ export const Dashboard: React.FC = () => {
           <p className="mt-2 text-gray-400">
             Vue d'ensemble de votre infrastructure Docker
           </p>
-          {isConnected && (
-            <div className="flex items-center mt-2 text-sm text-green-400">
-              <div className="w-2 h-2 bg-green-400 rounded-full mr-2 animate-pulse"></div>
-              Connecté en temps réel
-            </div>
-          )}
+          <div className="flex items-center mt-2 text-sm">
+            <div className={`w-2 h-2 rounded-full mr-2 ${isConnected ? 'bg-green-400 animate-pulse' : 'bg-red-400'}`}></div>
+            <span className={isConnected ? 'text-green-400' : 'text-red-400'}>
+              {isConnected ? 'Connecté en temps réel' : 'Déconnecté'}
+            </span>
+          </div>
         </div>
         <button
           onClick={refetch}

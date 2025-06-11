@@ -18,28 +18,40 @@ export function useWebSocket(url: string, options: UseWebSocketOptions = {}) {
   const socket = useRef<Socket | null>(null);
   const reconnectAttempts = useRef(0);
   const reconnectTimer = useRef<NodeJS.Timeout | null>(null);
+  const isConnecting = useRef(false);
 
   const {
     onMessage,
     onConnect,
     onDisconnect,
     onError,
-    reconnectInterval = 3000,
-    maxReconnectAttempts = 5,
+    reconnectInterval = 5000, // Augmenté à 5 secondes
+    maxReconnectAttempts = 3, // Réduit à 3 tentatives
   } = options;
 
   const connect = useCallback(() => {
+    // Éviter les connexions multiples
+    if (isConnecting.current || (socket.current && socket.current.connected)) {
+      return;
+    }
+
+    isConnecting.current = true;
+
     try {
       // Clean up existing connection
       if (socket.current) {
+        socket.current.removeAllListeners();
         socket.current.disconnect();
+        socket.current = null;
       }
 
-      // Create new socket connection - use default origin (allows Vite proxy to handle routing)
+      // Create new socket connection
       socket.current = io({
         transports: ['websocket', 'polling'],
-        timeout: 20000,
-        forceNew: true
+        timeout: 10000,
+        forceNew: true,
+        autoConnect: true,
+        reconnection: false, // Désactiver la reconnexion automatique de socket.io
       });
 
       socket.current.on('connect', () => {
@@ -47,24 +59,31 @@ export function useWebSocket(url: string, options: UseWebSocketOptions = {}) {
         setIsConnected(true);
         setError(null);
         reconnectAttempts.current = 0;
+        isConnecting.current = false;
         onConnect?.();
       });
 
       socket.current.on('disconnect', (reason) => {
         console.log('❌ WebSocket disconnected:', reason);
         setIsConnected(false);
+        isConnecting.current = false;
         onDisconnect?.();
 
-        // Attempt to reconnect if not manually disconnected
+        // Seulement reconnecter si ce n'est pas une déconnexion manuelle
         if (reason !== 'io client disconnect' && reconnectAttempts.current < maxReconnectAttempts) {
           reconnectAttempts.current++;
           console.log(`🔄 Attempting to reconnect (${reconnectAttempts.current}/${maxReconnectAttempts})...`);
+          
+          if (reconnectTimer.current) {
+            clearTimeout(reconnectTimer.current);
+          }
           
           reconnectTimer.current = setTimeout(() => {
             connect();
           }, reconnectInterval);
         } else if (reconnectAttempts.current >= maxReconnectAttempts) {
           setError('Max reconnection attempts reached');
+          console.warn('⚠️ Max reconnection attempts reached');
         }
       });
 
@@ -72,6 +91,7 @@ export function useWebSocket(url: string, options: UseWebSocketOptions = {}) {
         console.error('❌ WebSocket connection error:', error);
         setError('WebSocket connection error');
         setIsConnected(false);
+        isConnecting.current = false;
         onError?.(error as any);
       });
 
@@ -84,6 +104,7 @@ export function useWebSocket(url: string, options: UseWebSocketOptions = {}) {
     } catch (err) {
       console.error('❌ Failed to create WebSocket connection:', err);
       setError('Failed to create WebSocket connection');
+      isConnecting.current = false;
     }
   }, [onMessage, onConnect, onDisconnect, onError, reconnectInterval, maxReconnectAttempts]);
 
@@ -94,11 +115,13 @@ export function useWebSocket(url: string, options: UseWebSocketOptions = {}) {
     }
     
     if (socket.current) {
+      socket.current.removeAllListeners();
       socket.current.disconnect();
       socket.current = null;
     }
     
     setIsConnected(false);
+    isConnecting.current = false;
   }, []);
 
   const sendMessage = useCallback((event: string, data?: any) => {
@@ -111,9 +134,13 @@ export function useWebSocket(url: string, options: UseWebSocketOptions = {}) {
   }, []);
 
   useEffect(() => {
-    connect();
+    // Délai initial pour éviter les connexions immédiates
+    const initialDelay = setTimeout(() => {
+      connect();
+    }, 1000);
     
     return () => {
+      clearTimeout(initialDelay);
       disconnect();
     };
   }, [connect, disconnect]);
