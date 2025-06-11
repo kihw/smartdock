@@ -31,15 +31,76 @@ app.use(cors({
 app.use(express.json());
 app.use(express.static(path.join(__dirname, '../dist')));
 
-// Docker client with error handling
-let docker;
-try {
-  docker = new Docker({
-    socketPath: process.env.DOCKER_HOST || '/var/run/docker.sock'
-  });
-} catch (error) {
-  console.error('Failed to initialize Docker client:', error);
-  docker = null;
+// Docker client with improved error handling
+let docker = null;
+let dockerAvailable = false;
+
+async function initializeDocker() {
+  const dockerOptions = [];
+  
+  // Try different Docker connection options based on platform
+  if (process.platform === 'win32') {
+    dockerOptions.push(
+      { socketPath: '\\\\.\\pipe\\docker_engine' },
+      { host: 'localhost', port: 2375 },
+      { host: 'localhost', port: 2376, protocol: 'https' }
+    );
+  } else {
+    dockerOptions.push(
+      { socketPath: '/var/run/docker.sock' },
+      { host: 'localhost', port: 2375 },
+      { socketPath: process.env.DOCKER_HOST?.replace('unix://', '') }
+    ).filter(option => option.socketPath !== undefined);
+  }
+
+  // Add custom DOCKER_HOST if provided
+  if (process.env.DOCKER_HOST) {
+    if (process.env.DOCKER_HOST.startsWith('npipe://')) {
+      dockerOptions.unshift({ socketPath: process.env.DOCKER_HOST.replace('npipe://', '') });
+    } else if (process.env.DOCKER_HOST.startsWith('unix://')) {
+      dockerOptions.unshift({ socketPath: process.env.DOCKER_HOST.replace('unix://', '') });
+    } else if (process.env.DOCKER_HOST.startsWith('tcp://')) {
+      const url = new URL(process.env.DOCKER_HOST);
+      dockerOptions.unshift({ 
+        host: url.hostname, 
+        port: parseInt(url.port) || 2376,
+        protocol: url.protocol.replace(':', '')
+      });
+    }
+  }
+
+  for (const option of dockerOptions) {
+    try {
+      console.log(`🔍 Trying Docker connection:`, option);
+      const testDocker = new Docker(option);
+      
+      // Test the connection with a timeout
+      const pingPromise = testDocker.ping();
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Connection timeout')), 5000)
+      );
+      
+      await Promise.race([pingPromise, timeoutPromise]);
+      
+      docker = testDocker;
+      dockerAvailable = true;
+      console.log('✅ Docker connection successful with options:', option);
+      return true;
+    } catch (error) {
+      console.log(`❌ Docker connection failed with options ${JSON.stringify(option)}:`, error.message);
+      continue;
+    }
+  }
+  
+  console.warn('⚠️  Could not establish Docker connection. Running in mock mode.');
+  console.warn('💡 To fix this:');
+  console.warn('   - Ensure Docker Desktop is running');
+  console.warn('   - On Windows: Set DOCKER_HOST=npipe:////./pipe/docker_engine');
+  console.warn('   - On macOS/Linux: Ensure /var/run/docker.sock is accessible');
+  console.warn('   - Or set DOCKER_HOST environment variable to your Docker daemon');
+  
+  dockerAvailable = false;
+  return false;
 }
 
 // In-memory storage (replace with database in production)
@@ -66,6 +127,66 @@ const storage = {
   }
 };
 
+// Mock data for when Docker is not available
+const mockContainers = [
+  {
+    id: 'mock-container-1',
+    name: 'nginx-proxy',
+    image: 'nginx:latest',
+    status: 'running',
+    state: 'Up 2 hours',
+    uptime: '2h 15m',
+    ports: [{ privatePort: 80, publicPort: 8080, type: 'tcp', ip: '0.0.0.0' }],
+    cpu: 15.2,
+    memory: '64 MB',
+    memoryUsage: 25.6,
+    smartWakeUp: true,
+    autoUpdate: false,
+    created: new Date(Date.now() - 86400000).toISOString(),
+    labels: { 'smartdock.wakeup': 'true' },
+    networks: ['bridge'],
+    mounts: []
+  },
+  {
+    id: 'mock-container-2',
+    name: 'redis-cache',
+    image: 'redis:alpine',
+    status: 'exited',
+    state: 'Exited (0) 1 hour ago',
+    uptime: '-',
+    ports: [],
+    cpu: 0,
+    memory: '32 MB',
+    memoryUsage: 0,
+    smartWakeUp: false,
+    autoUpdate: true,
+    created: new Date(Date.now() - 172800000).toISOString(),
+    labels: { 'smartdock.autoupdate': 'true' },
+    networks: ['bridge'],
+    mounts: []
+  }
+];
+
+const mockStacks = [
+  {
+    id: 'web-stack',
+    name: 'web-stack',
+    description: 'Web application stack with nginx and php',
+    status: 'running',
+    services: [
+      { id: 'web-nginx', name: 'nginx', image: 'nginx:latest', status: 'running', replicas: 1, ports: [] },
+      { id: 'web-php', name: 'php', image: 'php:fpm', status: 'running', replicas: 1, ports: [] }
+    ],
+    runningServices: 2,
+    totalServices: 2,
+    uptime: '1d 5h',
+    autoUpdate: false,
+    lastDeploy: new Date(Date.now() - 86400000).toISOString(),
+    composeFile: '',
+    environment: {}
+  }
+];
+
 // API Routes
 const apiRouter = express.Router();
 
@@ -74,6 +195,7 @@ apiRouter.get('/health', (req, res) => {
   res.json({ 
     success: true, 
     message: 'SmartDock API is running',
+    dockerAvailable,
     timestamp: new Date().toISOString()
   });
 });
@@ -81,10 +203,12 @@ apiRouter.get('/health', (req, res) => {
 // Containers endpoints
 apiRouter.get('/containers', async (req, res) => {
   try {
-    if (!docker) {
-      return res.status(503).json({ 
-        success: false, 
-        error: 'Docker client not available' 
+    if (!dockerAvailable) {
+      return res.json({ 
+        success: true, 
+        data: mockContainers,
+        mock: true,
+        message: 'Docker not available - showing mock data'
       });
     }
 
@@ -155,10 +279,11 @@ apiRouter.get('/containers', async (req, res) => {
 
 apiRouter.post('/containers/:id/start', async (req, res) => {
   try {
-    if (!docker) {
-      return res.status(503).json({ 
-        success: false, 
-        error: 'Docker client not available' 
+    if (!dockerAvailable) {
+      return res.json({ 
+        success: true, 
+        message: 'Container start simulated (Docker not available)',
+        mock: true
       });
     }
 
@@ -180,10 +305,11 @@ apiRouter.post('/containers/:id/start', async (req, res) => {
 
 apiRouter.post('/containers/:id/stop', async (req, res) => {
   try {
-    if (!docker) {
-      return res.status(503).json({ 
-        success: false, 
-        error: 'Docker client not available' 
+    if (!dockerAvailable) {
+      return res.json({ 
+        success: true, 
+        message: 'Container stop simulated (Docker not available)',
+        mock: true
       });
     }
 
@@ -205,10 +331,11 @@ apiRouter.post('/containers/:id/stop', async (req, res) => {
 
 apiRouter.post('/containers/:id/restart', async (req, res) => {
   try {
-    if (!docker) {
-      return res.status(503).json({ 
-        success: false, 
-        error: 'Docker client not available' 
+    if (!dockerAvailable) {
+      return res.json({ 
+        success: true, 
+        message: 'Container restart simulated (Docker not available)',
+        mock: true
       });
     }
 
@@ -231,10 +358,12 @@ apiRouter.post('/containers/:id/restart', async (req, res) => {
 // Stacks endpoints
 apiRouter.get('/stacks', async (req, res) => {
   try {
-    if (!docker) {
-      return res.status(503).json({ 
-        success: false, 
-        error: 'Docker client not available' 
+    if (!dockerAvailable) {
+      return res.json({ 
+        success: true, 
+        data: mockStacks,
+        mock: true,
+        message: 'Docker not available - showing mock data'
       });
     }
 
@@ -396,42 +525,44 @@ apiRouter.post('/schedules', async (req, res) => {
 // System endpoints
 apiRouter.get('/system/stats', async (req, res) => {
   try {
-    if (!docker) {
+    if (!dockerAvailable) {
       return res.json({
         success: true,
         data: {
           containers: {
-            total: 0,
-            running: 0,
-            stopped: 0,
+            total: mockContainers.length,
+            running: mockContainers.filter(c => c.status === 'running').length,
+            stopped: mockContainers.filter(c => c.status === 'exited').length,
             paused: 0
           },
           stacks: {
-            total: 0,
-            running: 0,
-            stopped: 0,
-            partial: 0
+            total: mockStacks.length,
+            running: mockStacks.filter(s => s.status === 'running').length,
+            stopped: mockStacks.filter(s => s.status === 'stopped').length,
+            partial: mockStacks.filter(s => s.status === 'partial').length
           },
           system: {
-            cpu: 0,
+            cpu: Math.random() * 100,
             memory: {
-              used: 0,
-              total: 0,
-              percentage: 0
+              used: 4 * 1024 * 1024 * 1024, // 4GB
+              total: 8 * 1024 * 1024 * 1024, // 8GB
+              percentage: 50
             },
             disk: {
-              used: 0,
-              total: 0,
-              percentage: 0
+              used: 50 * 1024 * 1024 * 1024, // Mock 50GB
+              total: 100 * 1024 * 1024 * 1024, // Mock 100GB
+              percentage: 50
             },
             uptime: formatUptime(process.uptime())
           },
           docker: {
-            version: 'N/A',
+            version: 'N/A (Mock Mode)',
             apiVersion: 'N/A',
             status: 'disconnected'
           }
-        }
+        },
+        mock: true,
+        message: 'Docker not available - showing mock data'
       });
     }
 
@@ -496,10 +627,12 @@ apiRouter.get('/system/stats', async (req, res) => {
 // Smart Wake-Up endpoint
 apiRouter.post('/wakeup/:domain', async (req, res) => {
   try {
-    if (!docker) {
-      return res.status(503).json({ 
-        success: false, 
-        error: 'Docker client not available' 
+    if (!dockerAvailable) {
+      return res.json({ 
+        success: true, 
+        message: 'Smart wake-up simulated (Docker not available)',
+        status: 'ready',
+        mock: true
       });
     }
 
@@ -570,9 +703,12 @@ io.on('connection', (socket) => {
     // Send periodic container updates
     const interval = setInterval(async () => {
       try {
-        if (docker) {
+        if (dockerAvailable && docker) {
           const containers = await docker.listContainers({ all: true });
           socket.emit('containers:update', containers);
+        } else {
+          // Send mock data updates
+          socket.emit('containers:update', mockContainers);
         }
       } catch (error) {
         console.error('Error sending container updates:', error);
@@ -626,7 +762,7 @@ function setupCronJob(schedule) {
 }
 
 async function executeScheduledAction(schedule) {
-  if (!docker) return;
+  if (!dockerAvailable || !docker) return;
   
   const { target, targetType, action } = schedule;
   
@@ -654,7 +790,7 @@ async function executeScheduledAction(schedule) {
 }
 
 async function waitForContainer(containerId, timeout = 30000) {
-  if (!docker) return false;
+  if (!dockerAvailable || !docker) return false;
   
   const start = Date.now();
   const container = docker.getContainer(containerId);
@@ -676,17 +812,19 @@ async function waitForContainer(containerId, timeout = 30000) {
 }
 
 const PORT = process.env.PORT || 3000;
-server.listen(PORT, '0.0.0.0', () => {
-  console.log(`🚀 SmartDock server running on port ${PORT}`);
-  console.log(`📊 Dashboard: http://localhost:${PORT}`);
-  console.log(`🔌 WebSocket: ws://localhost:${PORT}`);
-  
-  // Test Docker connection
-  if (docker) {
-    docker.ping()
-      .then(() => console.log('✅ Docker connection successful'))
-      .catch(err => console.error('❌ Docker connection failed:', err.message));
-  } else {
-    console.warn('⚠️  Docker client not initialized');
-  }
+
+// Initialize Docker connection before starting server
+initializeDocker().then(() => {
+  server.listen(PORT, '0.0.0.0', () => {
+    console.log(`🚀 SmartDock server running on port ${PORT}`);
+    console.log(`📊 Dashboard: http://localhost:${PORT}`);
+    console.log(`🔌 WebSocket: ws://localhost:${PORT}`);
+    
+    if (dockerAvailable) {
+      console.log('✅ Docker connection successful');
+    } else {
+      console.log('⚠️  Running in mock mode - Docker not available');
+      console.log('💡 The application will work with simulated data');
+    }
+  });
 });
