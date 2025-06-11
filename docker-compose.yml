@@ -9,7 +9,7 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - ./data:/app/data
-      - ./caddy:/etc/caddy
+      - ./caddy/smartdock:/app/caddy/smartdock
     environment:
       - NODE_ENV=production
       - DOCKER_HOST=unix:///var/run/docker.sock
@@ -19,9 +19,8 @@ services:
     labels:
       - "smartdock.wakeup=false"
       - "smartdock.autoupdate=true"
-      - "traefik.enable=true"
-      - "traefik.http.routers.smartdock.rule=Host(`smartdock.localhost`)"
-      - "traefik.http.services.smartdock.loadbalancer.server.port=3000"
+    networks:
+      - smartdock-network
 
   caddy:
     image: caddy:2-alpine
@@ -29,6 +28,7 @@ services:
     ports:
       - "80:80"
       - "443:443"
+      - "2019:2019"
     volumes:
       - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
       - ./caddy/data:/data
@@ -37,7 +37,9 @@ services:
     restart: unless-stopped
     depends_on:
       - smartdock
+    networks:
+      - smartdock-network
 
 networks:
-  default:
-    name: smartdock-network
+  smartdock-network:
+    driver: bridge

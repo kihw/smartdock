@@ -4,7 +4,9 @@ WORKDIR /app
 
 # Copy package files
 COPY package*.json ./
-RUN npm ci --only=production
+
+# Install ALL dependencies (including devDependencies for build)
+RUN npm ci
 
 # Copy source code
 COPY . .
@@ -16,20 +18,24 @@ FROM node:18-alpine AS runtime
 
 WORKDIR /app
 
-# Install production dependencies
+# Install production dependencies only
 COPY package*.json ./
 RUN npm ci --only=production && npm cache clean --force
 
-# Copy built application
+# Copy built application from builder stage
 COPY --from=builder /app/dist ./dist
-COPY --from=builder /app/server ./server
+
+# Copy server files
+COPY server ./server
 
 # Create non-root user
 RUN addgroup -g 1001 -S nodejs
 RUN adduser -S smartdock -u 1001
 
-# Change ownership
+# Create necessary directories
+RUN mkdir -p /app/data /app/caddy/smartdock
 RUN chown -R smartdock:nodejs /app
+
 USER smartdock
 
 EXPOSE 3000
