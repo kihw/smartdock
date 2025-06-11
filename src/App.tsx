@@ -8,6 +8,7 @@ import { Proxy } from './pages/Proxy';
 import { Schedules } from './pages/Schedules';
 import { Updates } from './pages/Updates';
 import { Settings } from './pages/Settings';
+import { NotificationToast } from './components/NotificationToast';
 
 function App() {
   return (
@@ -23,6 +24,7 @@ function App() {
           <Route path="/settings" element={<Settings />} />
         </Routes>
       </Layout>
+      <NotificationToast />
     </Router>
   );
 }
