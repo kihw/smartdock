@@ -35,8 +35,8 @@ export function useWebSocket(url: string, options: UseWebSocketOptions = {}) {
         socket.current.disconnect();
       }
 
-      // Create new socket connection
-      const socketUrl = window.location.origin;
+      // Create new socket connection - connect to backend WebSocket server
+      const socketUrl = `ws://${window.location.hostname}:9001`;
       socket.current = io(socketUrl, {
         transports: ['websocket', 'polling'],
         timeout: 20000,
