@@ -47,10 +47,10 @@ export const Containers: React.FC = () => {
   const { data: containers, loading, error, refetch } = useApi<ContainerType[]>('/containers');
   const { success, error: notifyError } = useNotifications();
 
-  // Mutations for container actions
-  const startMutation = useApiMutation('/containers/:id/start', 'POST');
-  const stopMutation = useApiMutation('/containers/:id/stop', 'POST');
-  const restartMutation = useApiMutation('/containers/:id/restart', 'POST');
+  // Mutations for container actions - utilisation correcte
+  const startMutation = useApiMutation('', 'POST');
+  const stopMutation = useApiMutation('', 'POST');
+  const restartMutation = useApiMutation('', 'POST');
 
   const toggleContainer = (id: string) => {
     setSelectedContainers(prev =>
@@ -65,7 +65,10 @@ export const Containers: React.FC = () => {
     
     try {
       const container = containers?.find(c => c.id === containerId);
-      if (!container) return;
+      if (!container) {
+        notifyError('Erreur', 'Conteneur introuvable');
+        return;
+      }
 
       switch (action) {
         case 'start':
@@ -89,12 +92,18 @@ export const Containers: React.FC = () => {
         case 'smart-wakeup':
           setWakeUpModal({ isOpen: true, container });
           return;
+        default:
+          console.log(`Action ${action} not implemented`);
+          return;
       }
       
       // Refresh container list after action
-      setTimeout(refetch, 1000);
+      setTimeout(() => {
+        refetch().catch(console.error);
+      }, 1000);
     } catch (error) {
-      notifyError('Erreur', `Impossible d'exécuter l'action: ${error}`);
+      const errorMessage = error instanceof Error ? error.message : 'Erreur inconnue';
+      notifyError('Erreur', `Impossible d'exécuter l'action: ${errorMessage}`);
     }
   };
 
@@ -110,9 +119,10 @@ export const Containers: React.FC = () => {
       await new Promise(resolve => setTimeout(resolve, 2000));
       
       success('Smart Wake-Up', `${wakeUpModal.container.name} est maintenant actif`);
-      refetch();
+      refetch().catch(console.error);
     } catch (error) {
-      notifyError('Erreur Smart Wake-Up', `Impossible de démarrer le conteneur: ${error}`);
+      const errorMessage = error instanceof Error ? error.message : 'Erreur inconnue';
+      notifyError('Erreur Smart Wake-Up', `Impossible de démarrer le conteneur: ${errorMessage}`);
       throw error;
     }
   };
@@ -130,10 +140,25 @@ export const Containers: React.FC = () => {
       <div className="text-center py-12">
         <div className="text-red-400 mb-4">Erreur lors du chargement des conteneurs</div>
         <button 
-          onClick={refetch}
+          onClick={() => refetch().catch(console.error)}
           className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md transition-colors duration-200"
         >
           Réessayer
+        </button>
+      </div>
+    );
+  }
+
+  if (!containers || containers.length === 0) {
+    return (
+      <div className="text-center py-12">
+        <Container className="h-12 w-12 text-gray-400 mx-auto mb-4" />
+        <div className="text-gray-400 mb-4">Aucun conteneur trouvé</div>
+        <button 
+          onClick={() => refetch().catch(console.error)}
+          className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md transition-colors duration-200"
+        >
+          Actualiser
         </button>
       </div>
     );
@@ -175,8 +200,8 @@ export const Containers: React.FC = () => {
 
       {/* Containers Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
-        {containers?.map((container, index) => {
-          const StatusIcon = statusIcons[container.status];
+        {containers.map((container, index) => {
+          const StatusIcon = statusIcons[container.status] || Square;
           const isLoading = startMutation.loading || stopMutation.loading || restartMutation.loading;
           
           return (
@@ -216,7 +241,7 @@ export const Containers: React.FC = () => {
                     <div className="flex items-center space-x-2">
                       <span
                         className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium border ${
-                          statusColors[container.status]
+                          statusColors[container.status] || statusColors.exited
                         }`}
                       >
                         <StatusIcon className="h-3 w-3 mr-1" />
@@ -234,26 +259,26 @@ export const Containers: React.FC = () => {
                   <div className="grid grid-cols-2 gap-4 mb-4 text-sm">
                     <div className="flex items-center text-gray-400">
                       <Clock className="h-4 w-4 mr-2" />
-                      <span>{container.uptime}</span>
+                      <span>{container.uptime || '-'}</span>
                     </div>
                     <div className="flex items-center text-gray-400">
                       <Cpu className="h-4 w-4 mr-2" />
-                      <span>{container.cpu}%</span>
+                      <span>{container.cpu?.toFixed(1) || 0}%</span>
                     </div>
                     <div className="flex items-center text-gray-400">
                       <HardDrive className="h-4 w-4 mr-2" />
-                      <span>{container.memory}</span>
+                      <span>{container.memory || '0 B'}</span>
                     </div>
                     <div className="flex items-center text-gray-400">
                       <Network className="h-4 w-4 mr-2" />
-                      <span>{container.ports.length} ports</span>
+                      <span>{container.ports?.length || 0} ports</span>
                     </div>
                   </div>
 
                   <div className="mb-4">
                     <div className="text-xs text-gray-400 mb-1">Ports:</div>
                     <div className="flex flex-wrap gap-1">
-                      {container.ports.slice(0, 3).map((port, idx) => (
+                      {(container.ports || []).slice(0, 3).map((port, idx) => (
                         <span
                           key={idx}
                           className="inline-block bg-gray-700 text-gray-300 text-xs px-2 py-1 rounded"
@@ -261,9 +286,9 @@ export const Containers: React.FC = () => {
                           {port.publicPort ? `${port.publicPort}:${port.privatePort}` : port.privatePort}
                         </span>
                       ))}
-                      {container.ports.length > 3 && (
+                      {(container.ports?.length || 0) > 3 && (
                         <span className="inline-block bg-gray-700 text-gray-300 text-xs px-2 py-1 rounded">
-                          +{container.ports.length - 3}
+                          +{(container.ports?.length || 0) - 3}
                         </span>
                       )}
                     </div>

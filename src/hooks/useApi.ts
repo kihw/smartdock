@@ -73,7 +73,7 @@ export function useApi<T>(
   };
 }
 
-export function useApiMutation<T, P = any>(
+export function useApiMutation<T = any, P = any>(
   baseUrl: string,
   method: 'POST' | 'PUT' | 'DELETE' | 'PATCH' = 'POST'
 ) {
