@@ -3,10 +3,11 @@ services:
     build: .
     container_name: smartdock
     ports:
-      - "9001:3000"
+      - "3000:3000"
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /var/run/docker.sock:/var/run/docker.sock:rw
       - ./data:/app/data
+      - ./caddy:/etc/caddy
     environment:
       - NODE_ENV=production
       - DOCKER_HOST=unix:///var/run/docker.sock
@@ -18,36 +19,20 @@ services:
       - "smartdock.autoupdate=true"
     networks:
       - smartdock-network
+    user: "root"  # Nécessaire pour accéder au socket Docker
 
   caddy:
     image: caddy:2-alpine
     container_name: smartdock-proxy
     ports:
-      - "9080:80"
-      - "9443:443"
-      - "9019:2019"
-    command: |
-      sh -c 'echo "
-      {
-          admin :2019
-          auto_https off
-      }
-      
-      :80 {
-          reverse_proxy smartdock:3000
-      }
-      
-      *.localhost:80 {
-          @wakeup not path /api/*
-          handle @wakeup {
-              reverse_proxy smartdock:3000/api/wakeup/{host}
-          }
-          reverse_proxy smartdock:3000
-      }
-      " > /etc/caddy/Caddyfile && caddy run --config /etc/caddy/Caddyfile'
+      - "80:80"
+      - "443:443"
+      - "2019:2019"
     volumes:
-      - caddy_data:/data
-      - caddy_config:/config
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./caddy/data:/data
+      - ./caddy/config:/config
+      - ./caddy/smartdock:/etc/caddy/smartdock:ro
     restart: unless-stopped
     depends_on:
       - smartdock
@@ -57,7 +42,4 @@ services:
 networks:
   smartdock-network:
     driver: bridge
-
-volumes:
-  caddy_data:
-  caddy_config:
+    external: false

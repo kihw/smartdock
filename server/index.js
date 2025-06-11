@@ -38,7 +38,24 @@ let dockerAvailable = false;
 async function initializeDocker() {
   const dockerOptions = [];
   
-  // Try different Docker connection options based on platform
+  // Prioritize environment variable if set
+  if (process.env.DOCKER_HOST) {
+    if (process.env.DOCKER_HOST.startsWith('unix://')) {
+      const socketPath = process.env.DOCKER_HOST.replace('unix://', '');
+      dockerOptions.push({ socketPath });
+    } else if (process.env.DOCKER_HOST.startsWith('tcp://')) {
+      const url = new URL(process.env.DOCKER_HOST);
+      dockerOptions.push({ 
+        host: url.hostname, 
+        port: parseInt(url.port) || 2376,
+        protocol: url.protocol.replace(':', '')
+      });
+    } else if (process.env.DOCKER_HOST.startsWith('npipe://')) {
+      dockerOptions.push({ socketPath: process.env.DOCKER_HOST.replace('npipe://', '') });
+    }
+  }
+  
+  // Add platform-specific defaults
   if (process.platform === 'win32') {
     dockerOptions.push(
       { socketPath: '\\\\.\\pipe\\docker_engine' },
@@ -46,62 +63,58 @@ async function initializeDocker() {
       { host: 'localhost', port: 2376, protocol: 'https' }
     );
   } else {
-    // Add Unix socket options
-    dockerOptions.push({ socketPath: '/var/run/docker.sock' });
-    dockerOptions.push({ host: 'localhost', port: 2375 });
-    
-    // Add custom DOCKER_HOST socket if provided and valid
-    if (process.env.DOCKER_HOST && process.env.DOCKER_HOST.startsWith('unix://')) {
-      const socketPath = process.env.DOCKER_HOST.replace('unix://', '');
-      if (socketPath) {
-        dockerOptions.push({ socketPath });
-      }
-    }
+    // Unix-like systems (Linux, macOS)
+    dockerOptions.push(
+      { socketPath: '/var/run/docker.sock' },
+      { host: 'localhost', port: 2375 },
+      { host: 'localhost', port: 2376, protocol: 'https' },
+      { host: '127.0.0.1', port: 2375 },
+      { host: 'docker', port: 2375 }, // For Docker-in-Docker scenarios
+      { socketPath: '/var/run/docker.sock', timeout: 10000 }
+    );
   }
 
-  // Add custom DOCKER_HOST if provided
-  if (process.env.DOCKER_HOST) {
-    if (process.env.DOCKER_HOST.startsWith('npipe://')) {
-      dockerOptions.unshift({ socketPath: process.env.DOCKER_HOST.replace('npipe://', '') });
-    } else if (process.env.DOCKER_HOST.startsWith('tcp://')) {
-      const url = new URL(process.env.DOCKER_HOST);
-      dockerOptions.unshift({ 
-        host: url.hostname, 
-        port: parseInt(url.port) || 2376,
-        protocol: url.protocol.replace(':', '')
-      });
-    }
-  }
-
+  console.log('🔍 Attempting Docker connection...');
+  
   for (const option of dockerOptions) {
     try {
-      console.log(`🔍 Trying Docker connection:`, option);
+      console.log(`   Trying:`, JSON.stringify(option));
       const testDocker = new Docker(option);
       
-      // Test the connection with a timeout
+      // Test the connection with a shorter timeout
       const pingPromise = testDocker.ping();
       const timeoutPromise = new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('Connection timeout')), 5000)
+        setTimeout(() => reject(new Error('Connection timeout (3s)')), 3000)
       );
       
       await Promise.race([pingPromise, timeoutPromise]);
       
+      // Additional test: try to get version info
+      const version = await testDocker.version();
+      
       docker = testDocker;
       dockerAvailable = true;
-      console.log('✅ Docker connection successful with options:', option);
+      console.log('✅ Docker connection successful!');
+      console.log(`   Docker version: ${version.Version}`);
+      console.log(`   API version: ${version.ApiVersion}`);
+      console.log(`   Connection:`, JSON.stringify(option));
       return true;
     } catch (error) {
-      console.log(`❌ Docker connection failed with options ${JSON.stringify(option)}:`, error.message);
+      console.log(`   ❌ Failed:`, error.message);
       continue;
     }
   }
   
   console.warn('⚠️  Could not establish Docker connection. Running in mock mode.');
-  console.warn('💡 To fix this:');
-  console.warn('   - Ensure Docker Desktop is running');
-  console.warn('   - On Windows: Set DOCKER_HOST=npipe:////./pipe/docker_engine');
-  console.warn('   - On macOS/Linux: Ensure /var/run/docker.sock is accessible');
-  console.warn('   - Or set DOCKER_HOST environment variable to your Docker daemon');
+  console.warn('');
+  console.warn('💡 Solutions possibles:');
+  console.warn('   1. Vérifiez que Docker Desktop est démarré');
+  console.warn('   2. Vérifiez les permissions sur /var/run/docker.sock');
+  console.warn('   3. Ajoutez votre utilisateur au groupe docker: sudo usermod -aG docker $USER');
+  console.warn('   4. Redémarrez votre session après avoir ajouté au groupe docker');
+  console.warn('   5. Sur Windows: DOCKER_HOST=npipe:////./pipe/docker_engine');
+  console.warn('   6. Vérifiez que le socket Docker est accessible: ls -la /var/run/docker.sock');
+  console.warn('');
   
   dockerAvailable = false;
   return false;
@@ -131,7 +144,7 @@ const storage = {
   }
 };
 
-// Mock data for when Docker is not available
+// Enhanced mock data for when Docker is not available
 const mockContainers = [
   {
     id: 'mock-container-1',
@@ -140,16 +153,21 @@ const mockContainers = [
     status: 'running',
     state: 'Up 2 hours',
     uptime: '2h 15m',
-    ports: [{ privatePort: 80, publicPort: 8080, type: 'tcp', ip: '0.0.0.0' }],
+    ports: [
+      { privatePort: 80, publicPort: 8080, type: 'tcp', ip: '0.0.0.0' },
+      { privatePort: 443, publicPort: 8443, type: 'tcp', ip: '0.0.0.0' }
+    ],
     cpu: 15.2,
     memory: '64 MB',
     memoryUsage: 25.6,
     smartWakeUp: true,
     autoUpdate: false,
     created: new Date(Date.now() - 86400000).toISOString(),
-    labels: { 'smartdock.wakeup': 'true' },
-    networks: ['bridge'],
-    mounts: []
+    labels: { 'smartdock.wakeup': 'true', 'smartdock.domain': 'app.localhost' },
+    networks: ['bridge', 'smartdock-network'],
+    mounts: [
+      { type: 'bind', source: '/etc/nginx', destination: '/etc/nginx', mode: 'ro', rw: false }
+    ]
   },
   {
     id: 'mock-container-2',
@@ -158,7 +176,7 @@ const mockContainers = [
     status: 'exited',
     state: 'Exited (0) 1 hour ago',
     uptime: '-',
-    ports: [],
+    ports: [{ privatePort: 6379, type: 'tcp' }],
     cpu: 0,
     memory: '32 MB',
     memoryUsage: 0,
@@ -167,7 +185,29 @@ const mockContainers = [
     created: new Date(Date.now() - 172800000).toISOString(),
     labels: { 'smartdock.autoupdate': 'true' },
     networks: ['bridge'],
-    mounts: []
+    mounts: [
+      { type: 'volume', source: 'redis-data', destination: '/data', mode: 'rw', rw: true }
+    ]
+  },
+  {
+    id: 'mock-container-3',
+    name: 'postgres-db',
+    image: 'postgres:15',
+    status: 'running',
+    state: 'Up 1 day',
+    uptime: '1d 3h',
+    ports: [{ privatePort: 5432, publicPort: 5432, type: 'tcp', ip: '127.0.0.1' }],
+    cpu: 8.5,
+    memory: '128 MB',
+    memoryUsage: 45.2,
+    smartWakeUp: false,
+    autoUpdate: true,
+    created: new Date(Date.now() - 259200000).toISOString(),
+    labels: { 'smartdock.autoupdate': 'true' },
+    networks: ['bridge', 'db-network'],
+    mounts: [
+      { type: 'volume', source: 'postgres-data', destination: '/var/lib/postgresql/data', mode: 'rw', rw: true }
+    ]
   }
 ];
 
@@ -175,18 +215,38 @@ const mockStacks = [
   {
     id: 'web-stack',
     name: 'web-stack',
-    description: 'Web application stack with nginx and php',
+    description: 'Stack web complète avec Nginx, Node.js et PostgreSQL',
     status: 'running',
     services: [
-      { id: 'web-nginx', name: 'nginx', image: 'nginx:latest', status: 'running', replicas: 1, ports: [] },
-      { id: 'web-php', name: 'php', image: 'php:fpm', status: 'running', replicas: 1, ports: [] }
+      { id: 'web-nginx', name: 'nginx', image: 'nginx:latest', status: 'running', replicas: 1, ports: [{ privatePort: 80, publicPort: 8080, type: 'tcp' }] },
+      { id: 'web-api', name: 'api', image: 'node:18-alpine', status: 'running', replicas: 1, ports: [{ privatePort: 3000, type: 'tcp' }] },
+      { id: 'web-db', name: 'postgres', image: 'postgres:15', status: 'running', replicas: 1, ports: [{ privatePort: 5432, type: 'tcp' }] }
+    ],
+    runningServices: 3,
+    totalServices: 3,
+    uptime: '1d 5h',
+    githubRepo: 'user/web-app',
+    autoUpdate: true,
+    lastDeploy: new Date(Date.now() - 86400000).toISOString(),
+    composeFile: 'docker-compose.yml',
+    environment: { NODE_ENV: 'production', DB_HOST: 'postgres' }
+  },
+  {
+    id: 'monitoring-stack',
+    name: 'monitoring',
+    description: 'Stack de monitoring avec Prometheus, Grafana et AlertManager',
+    status: 'partial',
+    services: [
+      { id: 'mon-prometheus', name: 'prometheus', image: 'prom/prometheus:latest', status: 'running', replicas: 1, ports: [{ privatePort: 9090, publicPort: 9090, type: 'tcp' }] },
+      { id: 'mon-grafana', name: 'grafana', image: 'grafana/grafana:latest', status: 'running', replicas: 1, ports: [{ privatePort: 3000, publicPort: 3001, type: 'tcp' }] },
+      { id: 'mon-alertmanager', name: 'alertmanager', image: 'prom/alertmanager:latest', status: 'exited', replicas: 1, ports: [{ privatePort: 9093, type: 'tcp' }] }
     ],
     runningServices: 2,
-    totalServices: 2,
-    uptime: '1d 5h',
+    totalServices: 3,
+    uptime: '12h 30m',
     autoUpdate: false,
-    lastDeploy: new Date(Date.now() - 86400000).toISOString(),
-    composeFile: '',
+    lastDeploy: new Date(Date.now() - 172800000).toISOString(),
+    composeFile: 'docker-compose.monitoring.yml',
     environment: {}
   }
 ];
@@ -200,8 +260,56 @@ apiRouter.get('/health', (req, res) => {
     success: true, 
     message: 'SmartDock API is running',
     dockerAvailable,
-    timestamp: new Date().toISOString()
+    timestamp: new Date().toISOString(),
+    version: '1.0.0'
   });
+});
+
+// Docker connection test endpoint
+apiRouter.get('/docker/test', async (req, res) => {
+  try {
+    if (!dockerAvailable) {
+      return res.json({
+        success: false,
+        connected: false,
+        message: 'Docker not available',
+        suggestions: [
+          'Vérifiez que Docker Desktop est démarré',
+          'Vérifiez les permissions sur /var/run/docker.sock',
+          'Ajoutez votre utilisateur au groupe docker',
+          'Redémarrez votre session après modification des groupes'
+        ]
+      });
+    }
+
+    const info = await docker.info();
+    const version = await docker.version();
+    
+    res.json({
+      success: true,
+      connected: true,
+      docker: {
+        version: version.Version,
+        apiVersion: version.ApiVersion,
+        platform: version.Platform?.Name || 'Unknown',
+        containers: info.Containers,
+        containersRunning: info.ContainersRunning,
+        containersStopped: info.ContainersStopped,
+        images: info.Images,
+        serverVersion: info.ServerVersion,
+        kernelVersion: info.KernelVersion,
+        operatingSystem: info.OperatingSystem,
+        architecture: info.Architecture
+      }
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      connected: false,
+      error: error.message,
+      message: 'Erreur lors du test de connexion Docker'
+    });
+  }
 });
 
 // Containers endpoints
@@ -222,7 +330,7 @@ apiRouter.get('/containers', async (req, res) => {
         try {
           const inspect = await docker.getContainer(container.Id).inspect();
           const startedAt = inspect.State.StartedAt ? new Date(inspect.State.StartedAt) : null;
-          const uptime = startedAt ? Math.floor((Date.now() - startedAt.getTime()) / 1000) : 0;
+          const uptime = startedAt && inspect.State.Running ? Math.floor((Date.now() - startedAt.getTime()) / 1000) : 0;
           
           return {
             id: container.Id,
@@ -230,7 +338,7 @@ apiRouter.get('/containers', async (req, res) => {
             image: container.Image,
             status: container.State,
             state: container.Status,
-            uptime: formatUptime(uptime),
+            uptime: uptime > 0 ? formatUptime(uptime) : '-',
             ports: container.Ports.map(port => ({
               privatePort: port.PrivatePort,
               publicPort: port.PublicPort,

@@ -36,11 +36,27 @@ SmartDock est une interface web moderne et intuitive pour la gestion intelligent
 
 ### Prérequis
 
-- Node.js 18+ 
 - Docker et Docker Compose
-- Caddy (pour le proxy automatique)
+- Node.js 18+ (pour le développement)
 
-### Installation Rapide
+### Installation avec Docker (Recommandée)
+
+1. **Cloner le repository**
+```bash
+git clone https://github.com/votre-username/smartdock.git
+cd smartdock
+```
+
+2. **Lancer avec Docker Compose**
+```bash
+docker-compose up -d
+```
+
+3. **Accéder à l'interface**
+- SmartDock: http://localhost:3000
+- Caddy Admin: http://localhost:2019
+
+### Installation pour le développement
 
 ```bash
 # Cloner le repository
@@ -51,24 +67,32 @@ cd smartdock
 npm install
 
 # Démarrer en mode développement
-npm run dev
+npm run dev:full
 ```
 
-### Installation avec Docker
+## 🔧 Configuration Docker
 
+### Permissions Docker
+
+Pour que SmartDock puisse accéder à Docker, vous devez configurer les permissions appropriées :
+
+#### Linux/macOS
 ```bash
-# Construire l'image
-docker build -t smartdock .
+# Ajouter votre utilisateur au groupe docker
+sudo usermod -aG docker $USER
 
-# Lancer le conteneur
-docker run -d \
-  --name smartdock \
-  -p 3000:3000 \
-  -v /var/run/docker.sock:/var/run/docker.sock \
-  smartdock
+# Redémarrer votre session ou utiliser
+newgrp docker
+
+# Vérifier les permissions du socket Docker
+ls -la /var/run/docker.sock
 ```
 
-## 🔧 Configuration
+#### Windows
+```bash
+# Définir la variable d'environnement
+set DOCKER_HOST=npipe:////./pipe/docker_engine
+```
 
 ### Variables d'environnement
 
@@ -81,7 +105,7 @@ DOCKER_API_VERSION=1.41
 
 # Configuration Proxy
 CADDY_CONFIG_PATH=/etc/caddy/Caddyfile
-MAIN_DOMAIN=example.com
+MAIN_DOMAIN=localhost
 
 # Sécurité
 API_KEY=your-secure-api-key
@@ -92,6 +116,45 @@ DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/...
 SLACK_WEBHOOK_URL=https://hooks.slack.com/services/...
 ```
 
+## 🐳 Déploiement Docker
+
+### Configuration Docker Compose
+
+Le fichier `docker-compose.yml` inclut :
+
+- **SmartDock** : Interface principale sur le port 3000
+- **Caddy** : Reverse proxy avec SSL automatique
+- **Volumes** : Accès au socket Docker et persistance des données
+
+### Résolution des problèmes Docker
+
+Si SmartDock ne peut pas se connecter à Docker :
+
+1. **Vérifiez que Docker est démarré**
+```bash
+docker info
+```
+
+2. **Vérifiez les permissions**
+```bash
+# Linux/macOS
+sudo chmod 666 /var/run/docker.sock
+
+# Ou ajoutez l'utilisateur au groupe docker
+sudo usermod -aG docker $USER
+```
+
+3. **Testez la connexion**
+```bash
+# Depuis le conteneur SmartDock
+docker exec -it smartdock docker ps
+```
+
+4. **Vérifiez les logs**
+```bash
+docker logs smartdock
+```
+
 ### Configuration Caddy
 
 Exemple de configuration Caddy pour le proxy automatique :
@@ -99,12 +162,23 @@ Exemple de configuration Caddy pour le proxy automatique :
 ```caddyfile
 # Caddyfile
 {
-    admin localhost:2019
-    auto_https on
+    admin :2019
+    auto_https off
 }
 
-# Configuration automatique via SmartDock
-import /etc/caddy/smartdock/*.caddy
+# SmartDock principal
+smartdock.localhost {
+    reverse_proxy smartdock:3000
+}
+
+# Smart Wake-Up pour tous les sous-domaines
+*.localhost {
+    @wakeup not path /api/*
+    handle @wakeup {
+        reverse_proxy smartdock:3000/api/wakeup/{host}
+    }
+    reverse_proxy smartdock:3000
+}
 ```
 
 ## 📋 Utilisation
@@ -179,6 +253,9 @@ SmartDock expose une API REST pour l'intégration avec d'autres outils :
 ### Endpoints principaux
 
 ```bash
+# Test de connexion Docker
+GET    /api/docker/test
+
 # Conteneurs
 GET    /api/containers
 POST   /api/containers/:id/start
@@ -201,6 +278,10 @@ GET    /api/schedules
 POST   /api/schedules
 PUT    /api/schedules/:id
 DELETE /api/schedules/:id
+
+# Système
+GET    /api/system/stats
+GET    /api/health
 ```
 
 ### Authentification
@@ -224,8 +305,9 @@ smartdock/
 │   ├── hooks/         # Hooks personnalisés
 │   ├── utils/         # Utilitaires
 │   └── types/         # Types TypeScript
+├── server/            # Serveur Node.js
 ├── public/            # Assets statiques
-├── docs/             # Documentation
+├── caddy/            # Configuration Caddy
 └── docker/           # Configuration Docker
 ```
 
@@ -233,19 +315,16 @@ smartdock/
 
 ```bash
 # Développement
-npm run dev          # Serveur de développement
+npm run dev          # Interface uniquement
+npm run dev:server   # Serveur uniquement
+npm run dev:full     # Interface + Serveur
+
+# Production
 npm run build        # Build de production
-npm run preview      # Aperçu du build
+npm run start        # Démarrer le serveur
 
 # Qualité de code
 npm run lint         # Linting ESLint
-npm run type-check   # Vérification TypeScript
-npm run format       # Formatage Prettier
-
-# Tests
-npm run test         # Tests unitaires
-npm run test:e2e     # Tests end-to-end
-npm run test:coverage # Couverture de code
 ```
 
 ### Contribution
@@ -255,6 +334,33 @@ npm run test:coverage # Couverture de code
 3. **Committez** vos changements (`git commit -m 'Add amazing feature'`)
 4. **Push** vers la branche (`git push origin feature/amazing-feature`)
 5. **Ouvrez** une Pull Request
+
+## 🚨 Résolution des problèmes
+
+### Docker ne se connecte pas
+
+1. **Vérifiez que Docker Desktop est démarré**
+2. **Vérifiez les permissions du socket Docker**
+3. **Ajoutez votre utilisateur au groupe docker**
+4. **Redémarrez votre session**
+5. **Vérifiez la variable DOCKER_HOST**
+
+### Erreurs de permissions
+
+```bash
+# Linux/macOS - Permissions temporaires
+sudo chmod 666 /var/run/docker.sock
+
+# Solution permanente
+sudo usermod -aG docker $USER
+newgrp docker
+```
+
+### Conteneurs non visibles
+
+1. **Vérifiez que SmartDock a accès au socket Docker**
+2. **Consultez les logs du conteneur SmartDock**
+3. **Testez l'API de santé : GET /api/health**
 
 ## 🗺️ Roadmap
 
@@ -289,21 +395,6 @@ npm run test:coverage # Couverture de code
 - 🐛 [Signaler un bug](https://github.com/votre-username/smartdock/issues)
 - 💡 [Demander une fonctionnalité](https://github.com/votre-username/smartdock/discussions)
 - 📧 [Contact direct](mailto:support@smartdock.dev)
-
-## 📊 Statistiques
-
-<div align="center">
-  <img src="https://github-readme-stats.vercel.app/api?username=votre-username&repo=smartdock&show_icons=true&theme=dark" alt="GitHub Stats">
-</div>
-
-## 🏆 Remerciements
-
-- **Docker** - Pour la containerisation
-- **React** - Pour l'interface utilisateur
-- **Caddy** - Pour le reverse proxy
-- **Tailwind CSS** - Pour le design
-- **Lucide** - Pour les icônes
-- **Framer Motion** - Pour les animations
 
 ## 📄 Licence
 

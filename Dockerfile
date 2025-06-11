@@ -18,6 +18,9 @@ FROM node:18-alpine AS runtime
 
 WORKDIR /app
 
+# Install Docker CLI for container management
+RUN apk add --no-cache docker-cli
+
 # Install production dependencies only
 COPY package*.json ./
 RUN npm ci --only=production && npm cache clean --force
@@ -28,19 +31,16 @@ COPY --from=builder /app/dist ./dist
 # Copy server files
 COPY server ./server
 
-# Create non-root user
-RUN addgroup -g 1001 -S nodejs
-RUN adduser -S smartdock -u 1001
+# Create directories
+RUN mkdir -p /app/data /app/caddy/smartdock
 
-# Create necessary directories and set permissions
-RUN mkdir -p /app/data && chown -R smartdock:nodejs /app
-
-USER smartdock
+# Set proper permissions for Docker socket access
+RUN addgroup -g 999 docker || true
 
 EXPOSE 3000
 
-# Simple health check
-HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
   CMD wget --no-verbose --tries=1 --spider http://localhost:3000/api/health || exit 1
 
 CMD ["node", "server/index.js"]
