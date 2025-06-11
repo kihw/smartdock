@@ -15,20 +15,32 @@ const app = express();
 const server = createServer(app);
 const io = new Server(server, {
   cors: {
-    origin: process.env.NODE_ENV === 'production' ? false : ['http://localhost:5173'],
-    methods: ['GET', 'POST']
-  }
+    origin: "*",
+    methods: ['GET', 'POST'],
+    credentials: false
+  },
+  transports: ['websocket', 'polling']
 });
 
 // Middleware
-app.use(cors());
+app.use(cors({
+  origin: "*",
+  methods: ['GET', 'POST', 'PUT', 'DELETE'],
+  allowedHeaders: ['Content-Type', 'Authorization']
+}));
 app.use(express.json());
 app.use(express.static(path.join(__dirname, '../dist')));
 
-// Docker client
-const docker = new Docker({
-  socketPath: process.env.DOCKER_HOST || '/var/run/docker.sock'
-});
+// Docker client with error handling
+let docker;
+try {
+  docker = new Docker({
+    socketPath: process.env.DOCKER_HOST || '/var/run/docker.sock'
+  });
+} catch (error) {
+  console.error('Failed to initialize Docker client:', error);
+  docker = null;
+}
 
 // In-memory storage (replace with database in production)
 const storage = {
@@ -57,47 +69,99 @@ const storage = {
 // API Routes
 const apiRouter = express.Router();
 
+// Health check endpoint
+apiRouter.get('/health', (req, res) => {
+  res.json({ 
+    success: true, 
+    message: 'SmartDock API is running',
+    timestamp: new Date().toISOString()
+  });
+});
+
 // Containers endpoints
 apiRouter.get('/containers', async (req, res) => {
   try {
+    if (!docker) {
+      return res.status(503).json({ 
+        success: false, 
+        error: 'Docker client not available' 
+      });
+    }
+
     const containers = await docker.listContainers({ all: true });
     const enrichedContainers = await Promise.all(
       containers.map(async (container) => {
-        const inspect = await docker.getContainer(container.Id).inspect();
-        return {
-          id: container.Id,
-          name: container.Names[0].replace('/', ''),
-          image: container.Image,
-          status: container.State,
-          state: container.Status,
-          uptime: formatUptime(Date.now() / 1000 - inspect.State.StartedAt),
-          ports: container.Ports.map(port => ({
-            privatePort: port.PrivatePort,
-            publicPort: port.PublicPort,
-            type: port.Type,
-            ip: port.IP
-          })),
-          cpu: Math.random() * 100, // Mock data - implement real CPU monitoring
-          memory: formatBytes(inspect.HostConfig.Memory || 0),
-          memoryUsage: Math.random() * 100,
-          smartWakeUp: inspect.Config.Labels?.['smartdock.wakeup'] === 'true',
-          autoUpdate: inspect.Config.Labels?.['smartdock.autoupdate'] === 'true',
-          created: inspect.Created,
-          labels: inspect.Config.Labels || {},
-          networks: Object.keys(inspect.NetworkSettings.Networks || {}),
-          mounts: inspect.Mounts || []
-        };
+        try {
+          const inspect = await docker.getContainer(container.Id).inspect();
+          const startedAt = inspect.State.StartedAt ? new Date(inspect.State.StartedAt) : null;
+          const uptime = startedAt ? Math.floor((Date.now() - startedAt.getTime()) / 1000) : 0;
+          
+          return {
+            id: container.Id,
+            name: container.Names[0].replace('/', ''),
+            image: container.Image,
+            status: container.State,
+            state: container.Status,
+            uptime: formatUptime(uptime),
+            ports: container.Ports.map(port => ({
+              privatePort: port.PrivatePort,
+              publicPort: port.PublicPort,
+              type: port.Type,
+              ip: port.IP
+            })),
+            cpu: Math.random() * 100, // Mock data - implement real CPU monitoring
+            memory: formatBytes(inspect.HostConfig.Memory || 0),
+            memoryUsage: Math.random() * 100,
+            smartWakeUp: inspect.Config.Labels?.['smartdock.wakeup'] === 'true',
+            autoUpdate: inspect.Config.Labels?.['smartdock.autoupdate'] === 'true',
+            created: inspect.Created,
+            labels: inspect.Config.Labels || {},
+            networks: Object.keys(inspect.NetworkSettings.Networks || {}),
+            mounts: inspect.Mounts || []
+          };
+        } catch (error) {
+          console.error(`Error inspecting container ${container.Id}:`, error);
+          return {
+            id: container.Id,
+            name: container.Names[0].replace('/', ''),
+            image: container.Image,
+            status: container.State,
+            state: container.Status,
+            uptime: '-',
+            ports: container.Ports || [],
+            cpu: 0,
+            memory: '0 B',
+            memoryUsage: 0,
+            smartWakeUp: false,
+            autoUpdate: false,
+            created: '',
+            labels: {},
+            networks: [],
+            mounts: []
+          };
+        }
       })
     );
     
     res.json({ success: true, data: enrichedContainers });
   } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
+    console.error('Error fetching containers:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: error.message || 'Failed to fetch containers' 
+    });
   }
 });
 
 apiRouter.post('/containers/:id/start', async (req, res) => {
   try {
+    if (!docker) {
+      return res.status(503).json({ 
+        success: false, 
+        error: 'Docker client not available' 
+      });
+    }
+
     const container = docker.getContainer(req.params.id);
     await container.start();
     
@@ -106,12 +170,23 @@ apiRouter.post('/containers/:id/start', async (req, res) => {
     
     res.json({ success: true, message: 'Container started successfully' });
   } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
+    console.error('Error starting container:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: error.message || 'Failed to start container' 
+    });
   }
 });
 
 apiRouter.post('/containers/:id/stop', async (req, res) => {
   try {
+    if (!docker) {
+      return res.status(503).json({ 
+        success: false, 
+        error: 'Docker client not available' 
+      });
+    }
+
     const container = docker.getContainer(req.params.id);
     await container.stop();
     
@@ -120,12 +195,23 @@ apiRouter.post('/containers/:id/stop', async (req, res) => {
     
     res.json({ success: true, message: 'Container stopped successfully' });
   } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
+    console.error('Error stopping container:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: error.message || 'Failed to stop container' 
+    });
   }
 });
 
 apiRouter.post('/containers/:id/restart', async (req, res) => {
   try {
+    if (!docker) {
+      return res.status(503).json({ 
+        success: false, 
+        error: 'Docker client not available' 
+      });
+    }
+
     const container = docker.getContainer(req.params.id);
     await container.restart();
     
@@ -134,13 +220,24 @@ apiRouter.post('/containers/:id/restart', async (req, res) => {
     
     res.json({ success: true, message: 'Container restarted successfully' });
   } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
+    console.error('Error restarting container:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: error.message || 'Failed to restart container' 
+    });
   }
 });
 
 // Stacks endpoints
 apiRouter.get('/stacks', async (req, res) => {
   try {
+    if (!docker) {
+      return res.status(503).json({ 
+        success: false, 
+        error: 'Docker client not available' 
+      });
+    }
+
     // Get containers with compose labels
     const containers = await docker.listContainers({ all: true });
     const stacks = new Map();
@@ -193,7 +290,11 @@ apiRouter.get('/stacks', async (req, res) => {
     
     res.json({ success: true, data: Array.from(stacks.values()) });
   } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
+    console.error('Error fetching stacks:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: error.message || 'Failed to fetch stacks' 
+    });
   }
 });
 
@@ -203,7 +304,11 @@ apiRouter.get('/proxy/rules', async (req, res) => {
     const rules = Array.from(storage.proxyRules.values());
     res.json({ success: true, data: rules });
   } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
+    console.error('Error fetching proxy rules:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: error.message || 'Failed to fetch proxy rules' 
+    });
   }
 });
 
@@ -227,12 +332,13 @@ apiRouter.post('/proxy/rules', async (req, res) => {
     
     storage.proxyRules.set(id, rule);
     
-    // Generate Caddy configuration
-    await generateCaddyConfig();
-    
     res.json({ success: true, data: rule });
   } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
+    console.error('Error creating proxy rule:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: error.message || 'Failed to create proxy rule' 
+    });
   }
 });
 
@@ -242,7 +348,11 @@ apiRouter.get('/schedules', async (req, res) => {
     const schedules = Array.from(storage.schedules.values());
     res.json({ success: true, data: schedules });
   } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
+    console.error('Error fetching schedules:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: error.message || 'Failed to fetch schedules' 
+    });
   }
 });
 
@@ -275,15 +385,69 @@ apiRouter.post('/schedules', async (req, res) => {
     
     res.json({ success: true, data: scheduleItem });
   } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
+    console.error('Error creating schedule:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: error.message || 'Failed to create schedule' 
+    });
   }
 });
 
 // System endpoints
 apiRouter.get('/system/stats', async (req, res) => {
   try {
+    if (!docker) {
+      return res.json({
+        success: true,
+        data: {
+          containers: {
+            total: 0,
+            running: 0,
+            stopped: 0,
+            paused: 0
+          },
+          stacks: {
+            total: 0,
+            running: 0,
+            stopped: 0,
+            partial: 0
+          },
+          system: {
+            cpu: 0,
+            memory: {
+              used: 0,
+              total: 0,
+              percentage: 0
+            },
+            disk: {
+              used: 0,
+              total: 0,
+              percentage: 0
+            },
+            uptime: formatUptime(process.uptime())
+          },
+          docker: {
+            version: 'N/A',
+            apiVersion: 'N/A',
+            status: 'disconnected'
+          }
+        }
+      });
+    }
+
     const containers = await docker.listContainers({ all: true });
-    const info = await docker.info();
+    let info;
+    try {
+      info = await docker.info();
+    } catch (error) {
+      console.warn('Could not fetch Docker info:', error.message);
+      info = {
+        ServerVersion: 'Unknown',
+        ApiVersion: 'Unknown',
+        MemTotal: 0,
+        MemFree: 0
+      };
+    }
     
     const stats = {
       containers: {
@@ -301,9 +465,9 @@ apiRouter.get('/system/stats', async (req, res) => {
       system: {
         cpu: Math.random() * 100,
         memory: {
-          used: info.MemTotal - info.MemFree,
-          total: info.MemTotal,
-          percentage: ((info.MemTotal - info.MemFree) / info.MemTotal) * 100
+          used: info.MemTotal ? info.MemTotal - info.MemFree : 0,
+          total: info.MemTotal || 0,
+          percentage: info.MemTotal ? ((info.MemTotal - info.MemFree) / info.MemTotal) * 100 : 0
         },
         disk: {
           used: 50 * 1024 * 1024 * 1024, // Mock 50GB
@@ -313,21 +477,32 @@ apiRouter.get('/system/stats', async (req, res) => {
         uptime: formatUptime(process.uptime())
       },
       docker: {
-        version: info.ServerVersion,
-        apiVersion: info.ApiVersion,
+        version: info.ServerVersion || 'Unknown',
+        apiVersion: info.ApiVersion || 'Unknown',
         status: 'connected'
       }
     };
     
     res.json({ success: true, data: stats });
   } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
+    console.error('Error fetching system stats:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: error.message || 'Failed to fetch system stats' 
+    });
   }
 });
 
 // Smart Wake-Up endpoint
 apiRouter.post('/wakeup/:domain', async (req, res) => {
   try {
+    if (!docker) {
+      return res.status(503).json({ 
+        success: false, 
+        error: 'Docker client not available' 
+      });
+    }
+
     const domain = req.params.domain;
     const containers = await docker.listContainers({ all: true });
     
@@ -367,7 +542,11 @@ apiRouter.post('/wakeup/:domain', async (req, res) => {
       status: 'ready'
     });
   } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
+    console.error('Error in smart wake-up:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: error.message || 'Smart wake-up failed' 
+    });
   }
 });
 
@@ -391,8 +570,10 @@ io.on('connection', (socket) => {
     // Send periodic container updates
     const interval = setInterval(async () => {
       try {
-        const containers = await docker.listContainers({ all: true });
-        socket.emit('containers:update', containers);
+        if (docker) {
+          const containers = await docker.listContainers({ all: true });
+          socket.emit('containers:update', containers);
+        }
       } catch (error) {
         console.error('Error sending container updates:', error);
       }
@@ -445,6 +626,8 @@ function setupCronJob(schedule) {
 }
 
 async function executeScheduledAction(schedule) {
+  if (!docker) return;
+  
   const { target, targetType, action } = schedule;
   
   if (targetType === 'container') {
@@ -470,33 +653,16 @@ async function executeScheduledAction(schedule) {
   io.emit('schedule:executed', schedule);
 }
 
-async function generateCaddyConfig() {
-  const rules = Array.from(storage.proxyRules.values());
-  const config = rules.map(rule => {
-    const domain = `${rule.subdomain}.${rule.domain}`;
-    return `${domain} {
-  reverse_proxy ${rule.target}
-  ${rule.ssl ? 'tls internal' : ''}
-}`;
-  }).join('\n\n');
-  
-  // Write to Caddy config file (if path exists)
-  try {
-    await fs.writeFile('/tmp/smartdock.caddy', config);
-    console.log('Caddy configuration updated');
-  } catch (error) {
-    console.error('Error writing Caddy config:', error);
-  }
-}
-
 async function waitForContainer(containerId, timeout = 30000) {
+  if (!docker) return false;
+  
   const start = Date.now();
   const container = docker.getContainer(containerId);
   
   while (Date.now() - start < timeout) {
     try {
       const inspect = await container.inspect();
-      if (inspect.State.Running && inspect.State.Health?.Status === 'healthy') {
+      if (inspect.State.Running) {
         return true;
       }
     } catch (error) {
@@ -510,6 +676,17 @@ async function waitForContainer(containerId, timeout = 30000) {
 }
 
 const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => {
-  console.log(`SmartDock server running on port ${PORT}`);
+server.listen(PORT, '0.0.0.0', () => {
+  console.log(`🚀 SmartDock server running on port ${PORT}`);
+  console.log(`📊 Dashboard: http://localhost:${PORT}`);
+  console.log(`🔌 WebSocket: ws://localhost:${PORT}`);
+  
+  // Test Docker connection
+  if (docker) {
+    docker.ping()
+      .then(() => console.log('✅ Docker connection successful'))
+      .catch(err => console.error('❌ Docker connection failed:', err.message));
+  } else {
+    console.warn('⚠️  Docker client not initialized');
+  }
 });

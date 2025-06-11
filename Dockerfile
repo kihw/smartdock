@@ -39,8 +39,8 @@ USER smartdock
 
 EXPOSE 3000
 
-# Health check using ES modules syntax
-HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-  CMD node -e "import('http').then(http => { http.get('http://localhost:3000/api/system/stats', (res) => { process.exit(res.statusCode === 200 ? 0 : 1) }) })"
+# Simple health check
+HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
+  CMD wget --no-verbose --tries=1 --spider http://localhost:3000/api/health || exit 1
 
 CMD ["node", "server/index.js"]
