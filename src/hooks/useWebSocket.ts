@@ -35,9 +35,8 @@ export function useWebSocket(url: string, options: UseWebSocketOptions = {}) {
         socket.current.disconnect();
       }
 
-      // Create new socket connection - connect to backend WebSocket server
-      const socketUrl = `ws://${window.location.hostname}:9001`;
-      socket.current = io(socketUrl, {
+      // Create new socket connection - use default origin (allows Vite proxy to handle routing)
+      socket.current = io({
         transports: ['websocket', 'polling'],
         timeout: 20000,
         forceNew: true
