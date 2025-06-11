@@ -3,7 +3,7 @@ services:
     build: .
     container_name: smartdock
     ports:
-      - "3000:3000"  # Retour au port standard
+      - "9001:3000"  # Retour au port standard
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:rw
       - ./data:/app/data
