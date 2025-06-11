@@ -61,38 +61,38 @@ export const Containers: React.FC = () => {
   };
 
   const handleAction = async (action: string, containerId?: string) => {
+    if (!containerId) return;
+    
     try {
-      if (containerId) {
-        const container = containers?.find(c => c.id === containerId);
-        if (!container) return;
+      const container = containers?.find(c => c.id === containerId);
+      if (!container) return;
 
-        switch (action) {
-          case 'start':
-            await startMutation.mutate(undefined, { 
-              url: `/containers/${containerId}/start` 
-            });
-            success('Conteneur démarré', `${container.name} a été démarré avec succès`);
-            break;
-          case 'stop':
-            await stopMutation.mutate(undefined, { 
-              url: `/containers/${containerId}/stop` 
-            });
-            success('Conteneur arrêté', `${container.name} a été arrêté`);
-            break;
-          case 'restart':
-            await restartMutation.mutate(undefined, { 
-              url: `/containers/${containerId}/restart` 
-            });
-            success('Conteneur redémarré', `${container.name} a été redémarré`);
-            break;
-          case 'smart-wakeup':
-            setWakeUpModal({ isOpen: true, container });
-            return;
-        }
-        
-        // Refresh container list after action
-        setTimeout(refetch, 1000);
+      switch (action) {
+        case 'start':
+          await startMutation.mutate(undefined, { 
+            url: `/containers/${containerId}/start` 
+          });
+          success('Conteneur démarré', `${container.name} a été démarré avec succès`);
+          break;
+        case 'stop':
+          await stopMutation.mutate(undefined, { 
+            url: `/containers/${containerId}/stop` 
+          });
+          success('Conteneur arrêté', `${container.name} a été arrêté`);
+          break;
+        case 'restart':
+          await restartMutation.mutate(undefined, { 
+            url: `/containers/${containerId}/restart` 
+          });
+          success('Conteneur redémarré', `${container.name} a été redémarré`);
+          break;
+        case 'smart-wakeup':
+          setWakeUpModal({ isOpen: true, container });
+          return;
       }
+      
+      // Refresh container list after action
+      setTimeout(refetch, 1000);
     } catch (error) {
       notifyError('Erreur', `Impossible d'exécuter l'action: ${error}`);
     }

@@ -1,156 +1,95 @@
-import { useEffect, useRef, useState, useCallback } from 'react';
-import { io, Socket } from 'socket.io-client';
+import { useEffect, useState, useCallback } from 'react';
+import { wsManager } from '../utils/websocket';
 
 interface UseWebSocketOptions {
   onMessage?: (data: any) => void;
   onConnect?: () => void;
   onDisconnect?: () => void;
   onError?: (error: Event) => void;
-  reconnectInterval?: number;
-  maxReconnectAttempts?: number;
+  autoConnect?: boolean;
 }
 
-export function useWebSocket(url: string, options: UseWebSocketOptions = {}) {
+export function useWebSocket(url: string = '', options: UseWebSocketOptions = {}) {
   const [isConnected, setIsConnected] = useState(false);
   const [lastMessage, setLastMessage] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
-  
-  const socket = useRef<Socket | null>(null);
-  const reconnectAttempts = useRef(0);
-  const reconnectTimer = useRef<NodeJS.Timeout | null>(null);
-  const isConnecting = useRef(false);
 
   const {
     onMessage,
     onConnect,
     onDisconnect,
     onError,
-    reconnectInterval = 5000, // Augmenté à 5 secondes
-    maxReconnectAttempts = 3, // Réduit à 3 tentatives
+    autoConnect = true,
   } = options;
 
-  const connect = useCallback(() => {
-    // Éviter les connexions multiples
-    if (isConnecting.current || (socket.current && socket.current.connected)) {
-      return;
-    }
-
-    isConnecting.current = true;
-
-    try {
-      // Clean up existing connection
-      if (socket.current) {
-        socket.current.removeAllListeners();
-        socket.current.disconnect();
-        socket.current = null;
-      }
-
-      // Create new socket connection
-      socket.current = io({
-        transports: ['websocket', 'polling'],
-        timeout: 10000,
-        forceNew: true,
-        autoConnect: true,
-        reconnection: false, // Désactiver la reconnexion automatique de socket.io
-      });
-
-      socket.current.on('connect', () => {
-        console.log('✅ WebSocket connected');
-        setIsConnected(true);
-        setError(null);
-        reconnectAttempts.current = 0;
-        isConnecting.current = false;
-        onConnect?.();
-      });
-
-      socket.current.on('disconnect', (reason) => {
-        console.log('❌ WebSocket disconnected:', reason);
-        setIsConnected(false);
-        isConnecting.current = false;
-        onDisconnect?.();
-
-        // Seulement reconnecter si ce n'est pas une déconnexion manuelle
-        if (reason !== 'io client disconnect' && reconnectAttempts.current < maxReconnectAttempts) {
-          reconnectAttempts.current++;
-          console.log(`🔄 Attempting to reconnect (${reconnectAttempts.current}/${maxReconnectAttempts})...`);
-          
-          if (reconnectTimer.current) {
-            clearTimeout(reconnectTimer.current);
-          }
-          
-          reconnectTimer.current = setTimeout(() => {
-            connect();
-          }, reconnectInterval);
-        } else if (reconnectAttempts.current >= maxReconnectAttempts) {
-          setError('Max reconnection attempts reached');
-          console.warn('⚠️ Max reconnection attempts reached');
-        }
-      });
-
-      socket.current.on('connect_error', (error) => {
-        console.error('❌ WebSocket connection error:', error);
-        setError('WebSocket connection error');
-        setIsConnected(false);
-        isConnecting.current = false;
-        onError?.(error as any);
-      });
-
-      // Listen for all events and pass to onMessage
-      socket.current.onAny((eventName, data) => {
-        setLastMessage({ event: eventName, data });
-        onMessage?.({ event: eventName, data });
-      });
-
-    } catch (err) {
-      console.error('❌ Failed to create WebSocket connection:', err);
-      setError('Failed to create WebSocket connection');
-      isConnecting.current = false;
-    }
-  }, [onMessage, onConnect, onDisconnect, onError, reconnectInterval, maxReconnectAttempts]);
-
-  const disconnect = useCallback(() => {
-    if (reconnectTimer.current) {
-      clearTimeout(reconnectTimer.current);
-      reconnectTimer.current = null;
-    }
-    
-    if (socket.current) {
-      socket.current.removeAllListeners();
-      socket.current.disconnect();
-      socket.current = null;
-    }
-    
-    setIsConnected(false);
-    isConnecting.current = false;
+  const sendMessage = useCallback((event: string, data?: any) => {
+    return wsManager.sendMessage(event, data);
   }, []);
 
-  const sendMessage = useCallback((event: string, data?: any) => {
-    if (socket.current && socket.current.connected) {
-      socket.current.emit(event, data);
-      return true;
-    }
-    console.warn('⚠️ Cannot send message: WebSocket not connected');
-    return false;
+  const reconnect = useCallback(() => {
+    wsManager.connect();
+  }, []);
+
+  const disconnect = useCallback(() => {
+    wsManager.disconnect();
   }, []);
 
   useEffect(() => {
-    // Délai initial pour éviter les connexions immédiates
-    const initialDelay = setTimeout(() => {
-      connect();
-    }, 1000);
-    
+    // Update connection status
+    setIsConnected(wsManager.getConnectionStatus());
+
+    // Subscribe to events
+    const unsubscribeMessage = wsManager.onMessage((data) => {
+      setLastMessage(data);
+      onMessage?.(data);
+    });
+
+    const unsubscribeConnect = wsManager.onConnect(() => {
+      setIsConnected(true);
+      setError(null);
+      onConnect?.();
+    });
+
+    const unsubscribeDisconnect = wsManager.onDisconnect(() => {
+      setIsConnected(false);
+      onDisconnect?.();
+    });
+
+    const unsubscribeError = wsManager.onError((err) => {
+      setError(err.message || 'WebSocket error');
+      onError?.(err);
+    });
+
+    // Auto-connect if enabled
+    if (autoConnect) {
+      // Small delay to prevent immediate connection on every render
+      const connectTimer = setTimeout(() => {
+        wsManager.connect();
+      }, 100);
+
+      return () => {
+        clearTimeout(connectTimer);
+        unsubscribeMessage();
+        unsubscribeConnect();
+        unsubscribeDisconnect();
+        unsubscribeError();
+      };
+    }
+
     return () => {
-      clearTimeout(initialDelay);
-      disconnect();
+      unsubscribeMessage();
+      unsubscribeConnect();
+      unsubscribeDisconnect();
+      unsubscribeError();
     };
-  }, [connect, disconnect]);
+  }, [onMessage, onConnect, onDisconnect, onError, autoConnect]);
 
   return {
     isConnected,
     lastMessage,
     error,
     sendMessage,
-    reconnect: connect,
+    reconnect,
     disconnect,
   };
 }

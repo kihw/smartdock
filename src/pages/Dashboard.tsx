@@ -21,15 +21,19 @@ export const Dashboard: React.FC = () => {
   const { data: stats, loading, error, refetch } = useApi<SystemStats>('/system/stats');
   const { success, error: notifyError } = useNotifications();
 
-  // WebSocket for real-time updates avec gestion d'erreur améliorée
+  // WebSocket for real-time updates avec singleton
   const { isConnected, lastMessage } = useWebSocket('', {
     onMessage: (data) => {
-      if (data?.event === 'container:started') {
-        success('Conteneur démarré', `Le conteneur ${data.data?.containerName || 'inconnu'} a été démarré avec succès`);
-        refetch();
-      } else if (data?.event === 'container:stopped') {
-        notifyError('Conteneur arrêté', `Le conteneur ${data.data?.containerName || 'inconnu'} a été arrêté`);
-        refetch();
+      try {
+        if (data?.event === 'container:started') {
+          success('Conteneur démarré', `Le conteneur ${data.data?.containerName || 'inconnu'} a été démarré avec succès`);
+          refetch();
+        } else if (data?.event === 'container:stopped') {
+          notifyError('Conteneur arrêté', `Le conteneur ${data.data?.containerName || 'inconnu'} a été arrêté`);
+          refetch();
+        }
+      } catch (err) {
+        console.warn('Error processing WebSocket message:', err);
       }
     },
     onConnect: () => {
@@ -38,15 +42,16 @@ export const Dashboard: React.FC = () => {
     onDisconnect: () => {
       console.log('Disconnected from WebSocket');
     },
-    maxReconnectAttempts: 3,
-    reconnectInterval: 5000
+    onError: (error) => {
+      console.warn('WebSocket error:', error);
+    }
   });
 
   const statsCards = stats ? [
     {
       name: 'Conteneurs Actifs',
-      value: stats.containers.running.toString(),
-      total: stats.containers.total,
+      value: stats.containers?.running?.toString() || '0',
+      total: stats.containers?.total || 0,
       change: '+2',
       changeType: 'positive' as const,
       icon: Container,
@@ -54,8 +59,8 @@ export const Dashboard: React.FC = () => {
     },
     {
       name: 'Stacks Déployées',
-      value: stats.stacks.running.toString(),
-      total: stats.stacks.total,
+      value: stats.stacks?.running?.toString() || '0',
+      total: stats.stacks?.total || 0,
       change: '0',
       changeType: 'neutral' as const,
       icon: Layers,
@@ -63,16 +68,16 @@ export const Dashboard: React.FC = () => {
     },
     {
       name: 'Utilisation CPU',
-      value: `${Math.round(stats.system.cpu)}%`,
-      change: stats.system.cpu > 80 ? 'Élevé' : 'Normal',
-      changeType: stats.system.cpu > 80 ? 'negative' : 'positive',
+      value: `${Math.round(stats.system?.cpu || 0)}%`,
+      change: (stats.system?.cpu || 0) > 80 ? 'Élevé' : 'Normal',
+      changeType: (stats.system?.cpu || 0) > 80 ? 'negative' : 'positive',
       icon: Activity,
       color: 'text-purple-400'
     },
     {
       name: 'Mémoire',
-      value: `${Math.round(stats.system.memory.percentage)}%`,
-      change: `${(stats.system.memory.used / (1024 * 1024 * 1024)).toFixed(1)}GB`,
+      value: `${Math.round(stats.system?.memory?.percentage || 0)}%`,
+      change: `${((stats.system?.memory?.used || 0) / (1024 * 1024 * 1024)).toFixed(1)}GB`,
       changeType: 'neutral' as const,
       icon: TrendingUp,
       color: 'text-orange-400'
@@ -227,16 +232,16 @@ export const Dashboard: React.FC = () => {
             <div className="flex items-center justify-between">
               <span className="text-gray-400">Docker Daemon</span>
               <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-                stats?.docker.status === 'connected' 
+                stats?.docker?.status === 'connected' 
                   ? 'bg-green-100 text-green-800' 
                   : 'bg-red-100 text-red-800'
               }`}>
-                {stats?.docker.status === 'connected' ? 'Connecté' : 'Déconnecté'}
+                {stats?.docker?.status === 'connected' ? 'Connecté' : 'Déconnecté'}
               </span>
             </div>
             <div className="flex items-center justify-between">
               <span className="text-gray-400">Version Docker</span>
-              <span className="text-gray-300">{stats?.docker.version}</span>
+              <span className="text-gray-300">{stats?.docker?.version || 'N/A'}</span>
             </div>
             <div className="flex items-center justify-between">
               <span className="text-gray-400">Smart Wake-Up</span>
@@ -246,7 +251,7 @@ export const Dashboard: React.FC = () => {
             </div>
             <div className="flex items-center justify-between">
               <span className="text-gray-400">Uptime Système</span>
-              <span className="text-gray-300">{stats?.system.uptime}</span>
+              <span className="text-gray-300">{stats?.system?.uptime || 'N/A'}</span>
             </div>
           </div>
         </motion.div>
