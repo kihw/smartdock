@@ -1,11 +1,9 @@
-version: '3.8'
-
 services:
   smartdock:
     build: .
     container_name: smartdock
     ports:
-      - "3000:3000"
+      - "3001:3000"  # Port externe 3001 au lieu de 3000
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - ./data:/app/data
@@ -26,8 +24,8 @@ services:
     image: caddy:2-alpine
     container_name: smartdock-proxy
     ports:
-      - "80:80"
-      - "443:443"
+      - "8080:80"   # Port externe 8080 au lieu de 80
+      - "8443:443"  # Port externe 8443 au lieu de 443
       - "2019:2019"
     volumes:
       - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro

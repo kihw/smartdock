@@ -1,11 +1,11 @@
 # SmartDock Caddy Configuration
 {
     admin localhost:2019
-    auto_https on
+    auto_https off
 }
 
 # Main SmartDock interface
-smartdock.localhost {
+:8080 {
     reverse_proxy smartdock:3000
 }
 
@@ -13,7 +13,7 @@ smartdock.localhost {
 import /etc/caddy/smartdock/*.caddy
 
 # Default catch-all for Smart Wake-Up
-*.localhost {
+*.localhost:8080 {
     @wakeup not path /api/*
     handle @wakeup {
         reverse_proxy smartdock:3000/api/wakeup/{host}
