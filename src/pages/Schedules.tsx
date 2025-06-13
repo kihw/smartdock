@@ -13,11 +13,15 @@ import {
   Container,
   Layers,
   Activity,
-  AlertCircle
+  AlertCircle,
+  Edit,
+  Search,
+  Filter
 } from 'lucide-react';
 import { useApi, useApiMutation } from '../hooks/useApi';
 import { useNotifications } from '../utils/notifications';
 import { LoadingSpinner, LoadingOverlay } from '../components/LoadingSpinner';
+import { ScheduleModal } from '../components/ScheduleModal';
 import { Schedule } from '../types';
 
 const actionColors = {
@@ -49,16 +53,40 @@ const statusIcons = {
 };
 
 export const Schedules: React.FC = () => {
-  const [showAddSchedule, setShowAddSchedule] = useState(false);
+  const [scheduleModal, setScheduleModal] = useState<{
+    isOpen: boolean;
+    schedule?: Schedule | null;
+  }>({ isOpen: false });
+  const [searchTerm, setSearchTerm] = useState('');
+  const [statusFilter, setStatusFilter] = useState<string>('all');
 
   const { data: schedules, loading, error, refetch } = useApi<Schedule[]>('/schedules');
   const { success, error: notifyError } = useNotifications();
 
   // Mutations for schedule actions
-  const createMutation = useApiMutation('', 'POST');
+  const createMutation = useApiMutation('/schedules', 'POST');
   const updateMutation = useApiMutation('', 'PUT');
   const deleteMutation = useApiMutation('', 'DELETE');
   const runMutation = useApiMutation('', 'POST');
+
+  const handleSaveSchedule = async (scheduleData: Partial<Schedule>) => {
+    try {
+      if (scheduleModal.schedule) {
+        // Update existing schedule
+        await updateMutation.mutate(scheduleData, { 
+          url: `/schedules/${scheduleModal.schedule.id}` 
+        });
+        success('Tâche mise à jour', 'La tâche programmée a été mise à jour avec succès');
+      } else {
+        // Create new schedule
+        await createMutation.mutate(scheduleData);
+        success('Tâche créée', 'La nouvelle tâche programmée a été créée avec succès');
+      }
+      refetch().catch(console.error);
+    } catch (error) {
+      notifyError('Erreur', 'Impossible de sauvegarder la tâche');
+    }
+  };
 
   const handleToggleSchedule = async (id: string) => {
     try {
@@ -120,6 +148,18 @@ export const Schedules: React.FC = () => {
     return cron;
   };
 
+  // Filter schedules based on search and status
+  const filteredSchedules = schedules?.filter(schedule => {
+    const matchesSearch = schedule.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                         schedule.description.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                         schedule.target.toLowerCase().includes(searchTerm.toLowerCase());
+    const matchesStatus = statusFilter === 'all' || 
+                         (statusFilter === 'enabled' && schedule.enabled) ||
+                         (statusFilter === 'disabled' && !schedule.enabled) ||
+                         schedule.status === statusFilter;
+    return matchesSearch && matchesStatus;
+  }) || [];
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -164,7 +204,7 @@ export const Schedules: React.FC = () => {
         
         <div className="flex space-x-3">
           <button
-            onClick={() => setShowAddSchedule(true)}
+            onClick={() => setScheduleModal({ isOpen: true })}
             className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md transition-colors duration-200 flex items-center space-x-2"
           >
             <Plus className="h-4 w-4" />
@@ -218,21 +258,65 @@ export const Schedules: React.FC = () => {
         </div>
       </motion.div>
 
+      {/* Filters and Search */}
+      <div className="bg-gray-800 rounded-lg border border-gray-700 p-4">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between space-y-4 sm:space-y-0">
+          <div className="flex flex-col sm:flex-row space-y-2 sm:space-y-0 sm:space-x-4">
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
+              <input
+                type="text"
+                placeholder="Rechercher des tâches..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="pl-10 pr-4 py-2 bg-gray-700 border border-gray-600 rounded-md text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+            
+            <select
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value)}
+              className="px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              <option value="all">Toutes les tâches ({scheduleList.length})</option>
+              <option value="enabled">Activées ({activeSchedules})</option>
+              <option value="disabled">Désactivées ({scheduleList.length - activeSchedules})</option>
+              <option value="active">En cours ({scheduleList.filter(s => s.status === 'active').length})</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
       {/* Liste des tâches */}
-      {scheduleList.length === 0 ? (
+      {filteredSchedules.length === 0 ? (
         <div className="text-center py-12">
-          <Clock className="h-12 w-12 text-gray-400 mx-auto mb-4" />
-          <div className="text-gray-400 mb-4">Aucune tâche programmée</div>
-          <button 
-            onClick={() => setShowAddSchedule(true)}
-            className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md transition-colors duration-200"
-          >
-            Créer une tâche
-          </button>
+          {searchTerm ? (
+            <>
+              <Search className="h-12 w-12 text-gray-400 mx-auto mb-4" />
+              <div className="text-gray-400 mb-4">Aucune tâche trouvée pour "{searchTerm}"</div>
+              <button 
+                onClick={() => setSearchTerm('')}
+                className="text-blue-400 hover:text-blue-300 text-sm"
+              >
+                Effacer la recherche
+              </button>
+            </>
+          ) : (
+            <>
+              <Clock className="h-12 w-12 text-gray-400 mx-auto mb-4" />
+              <div className="text-gray-400 mb-4">Aucune tâche programmée</div>
+              <button 
+                onClick={() => setScheduleModal({ isOpen: true })}
+                className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md transition-colors duration-200"
+              >
+                Créer une tâche
+              </button>
+            </>
+          )}
         </div>
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {scheduleList.map((schedule, index) => {
+          {filteredSchedules.map((schedule, index) => {
             const ActionIcon = actionIcons[schedule.action] || Play;
             const StatusIcon = statusIcons[schedule.status] || Clock;
             const TargetIcon = schedule.targetType === 'container' ? Container : Layers;
@@ -272,6 +356,11 @@ export const Schedules: React.FC = () => {
                           <ActionIcon className="h-3 w-3 mr-1" />
                           {schedule.action}
                         </span>
+                        {schedule.enabled && (
+                          <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800 border border-green-200">
+                            Activée
+                          </span>
+                        )}
                       </div>
                     </div>
                     
@@ -327,8 +416,11 @@ export const Schedules: React.FC = () => {
                       <Play className="h-4 w-4" />
                       <span>Exécuter</span>
                     </button>
-                    <button className="bg-gray-600 hover:bg-gray-700 text-white py-2 px-3 rounded-md transition-colors duration-200">
-                      <Settings className="h-4 w-4" />
+                    <button
+                      onClick={() => setScheduleModal({ isOpen: true, schedule })}
+                      className="bg-gray-600 hover:bg-gray-700 text-white py-2 px-3 rounded-md transition-colors duration-200"
+                    >
+                      <Edit className="h-4 w-4" />
                     </button>
                     <button
                       onClick={() => handleDeleteSchedule(schedule.id)}
@@ -344,6 +436,14 @@ export const Schedules: React.FC = () => {
           })}
         </div>
       )}
+
+      {/* Schedule Modal */}
+      <ScheduleModal
+        isOpen={scheduleModal.isOpen}
+        onClose={() => setScheduleModal({ isOpen: false })}
+        schedule={scheduleModal.schedule}
+        onSave={handleSaveSchedule}
+      />
     </div>
   );
 };

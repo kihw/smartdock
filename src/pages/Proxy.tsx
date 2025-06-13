@@ -13,11 +13,14 @@ import {
   Clock,
   RefreshCw,
   Eye,
-  Edit
+  Edit,
+  Search,
+  Filter
 } from 'lucide-react';
 import { useApi, useApiMutation } from '../hooks/useApi';
 import { useNotifications } from '../utils/notifications';
 import { LoadingSpinner, LoadingOverlay } from '../components/LoadingSpinner';
+import { ProxyRuleModal } from '../components/ProxyRuleModal';
 import { ProxyRule } from '../types';
 
 const statusColors = {
@@ -36,18 +39,41 @@ const statusIcons = {
 
 export const Proxy: React.FC = () => {
   const [autoProxy, setAutoProxy] = useState(true);
-  const [mainDomain, setMainDomain] = useState('example.com');
-  const [showAddRule, setShowAddRule] = useState(false);
-  const [selectedRule, setSelectedRule] = useState<ProxyRule | null>(null);
+  const [mainDomain, setMainDomain] = useState('localhost');
+  const [ruleModal, setRuleModal] = useState<{
+    isOpen: boolean;
+    rule?: ProxyRule | null;
+  }>({ isOpen: false });
+  const [searchTerm, setSearchTerm] = useState('');
+  const [statusFilter, setStatusFilter] = useState<string>('all');
 
   const { data: proxyRules, loading, error, refetch } = useApi<ProxyRule[]>('/proxy/rules');
   const { success, error: notifyError } = useNotifications();
 
   // Mutations for proxy actions
-  const createMutation = useApiMutation('', 'POST');
+  const createMutation = useApiMutation('/proxy/rules', 'POST');
   const updateMutation = useApiMutation('', 'PUT');
   const deleteMutation = useApiMutation('', 'DELETE');
   const testMutation = useApiMutation('', 'POST');
+
+  const handleSaveRule = async (ruleData: Partial<ProxyRule>) => {
+    try {
+      if (ruleModal.rule) {
+        // Update existing rule
+        await updateMutation.mutate(ruleData, { 
+          url: `/proxy/rules/${ruleModal.rule.id}` 
+        });
+        success('Règle mise à jour', 'La règle proxy a été mise à jour avec succès');
+      } else {
+        // Create new rule
+        await createMutation.mutate(ruleData);
+        success('Règle créée', 'La nouvelle règle proxy a été créée avec succès');
+      }
+      refetch().catch(console.error);
+    } catch (error) {
+      notifyError('Erreur', 'Impossible de sauvegarder la règle');
+    }
+  };
 
   const handleToggleRule = async (id: string) => {
     try {
@@ -82,13 +108,10 @@ export const Proxy: React.FC = () => {
     }
   };
 
-  const handleTestRule = async (id: string) => {
+  const handleTestRule = async (rule: ProxyRule) => {
     try {
-      const rule = proxyRules?.find(r => r.id === id);
-      if (!rule) return;
-
-      await testMutation.mutate({ ruleId: id }, { 
-        url: `/proxy/rules/${id}/test` 
+      await testMutation.mutate({ ruleId: rule.id }, { 
+        url: `/proxy/rules/${rule.id}/test` 
       });
       
       success('Test réussi', `La règle ${rule.subdomain}.${rule.domain} fonctionne correctement`);
@@ -97,6 +120,15 @@ export const Proxy: React.FC = () => {
       notifyError('Erreur', 'Le test de la règle a échoué');
     }
   };
+
+  // Filter rules based on search and status
+  const filteredRules = proxyRules?.filter(rule => {
+    const matchesSearch = rule.subdomain.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                         rule.domain.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                         rule.target.toLowerCase().includes(searchTerm.toLowerCase());
+    const matchesStatus = statusFilter === 'all' || rule.status === statusFilter;
+    return matchesSearch && matchesStatus;
+  }) || [];
 
   if (loading) {
     return (
@@ -138,7 +170,7 @@ export const Proxy: React.FC = () => {
         
         <div className="flex space-x-3">
           <button
-            onClick={() => setShowAddRule(true)}
+            onClick={() => setRuleModal({ isOpen: true })}
             className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md transition-colors duration-200 flex items-center space-x-2"
           >
             <Plus className="h-4 w-4" />
@@ -238,24 +270,68 @@ export const Proxy: React.FC = () => {
         </div>
       </motion.div>
 
+      {/* Filters and Search */}
+      <div className="bg-gray-800 rounded-lg border border-gray-700 p-4">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between space-y-4 sm:space-y-0">
+          <div className="flex flex-col sm:flex-row space-y-2 sm:space-y-0 sm:space-x-4">
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
+              <input
+                type="text"
+                placeholder="Rechercher des règles..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="pl-10 pr-4 py-2 bg-gray-700 border border-gray-600 rounded-md text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+            
+            <select
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value)}
+              className="px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              <option value="all">Tous les statuts ({rules.length})</option>
+              <option value="active">Actives ({activeRules})</option>
+              <option value="inactive">Inactives ({rules.filter(r => r.status === 'inactive').length})</option>
+              <option value="error">Erreurs ({errorRules})</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
       {/* Règles de proxy */}
       <div className="space-y-4">
         <h2 className="text-xl font-semibold text-white">Règles de Proxy</h2>
         
-        {rules.length === 0 ? (
+        {filteredRules.length === 0 ? (
           <div className="text-center py-12">
-            <Globe className="h-12 w-12 text-gray-400 mx-auto mb-4" />
-            <div className="text-gray-400 mb-4">Aucune règle proxy configurée</div>
-            <button 
-              onClick={() => setShowAddRule(true)}
-              className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md transition-colors duration-200"
-            >
-              Créer une règle
-            </button>
+            {searchTerm ? (
+              <>
+                <Search className="h-12 w-12 text-gray-400 mx-auto mb-4" />
+                <div className="text-gray-400 mb-4">Aucune règle trouvée pour "{searchTerm}"</div>
+                <button 
+                  onClick={() => setSearchTerm('')}
+                  className="text-blue-400 hover:text-blue-300 text-sm"
+                >
+                  Effacer la recherche
+                </button>
+              </>
+            ) : (
+              <>
+                <Globe className="h-12 w-12 text-gray-400 mx-auto mb-4" />
+                <div className="text-gray-400 mb-4">Aucune règle proxy configurée</div>
+                <button 
+                  onClick={() => setRuleModal({ isOpen: true })}
+                  className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md transition-colors duration-200"
+                >
+                  Créer une règle
+                </button>
+              </>
+            )}
           </div>
         ) : (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {rules.map((rule, index) => {
+            {filteredRules.map((rule, index) => {
               const StatusIcon = statusIcons[rule.status] || Clock;
               const isLoading = updateMutation.loading || deleteMutation.loading || testMutation.loading;
               
@@ -276,7 +352,7 @@ export const Proxy: React.FC = () => {
                             {rule.subdomain}.{rule.domain}
                           </h3>
                           <a
-                            href={`https://${rule.subdomain}.${rule.domain}`}
+                            href={`${rule.ssl ? 'https' : 'http'}://${rule.subdomain}.${rule.domain}`}
                             target="_blank"
                             rel="noopener noreferrer"
                             className="text-blue-400 hover:text-blue-300"
@@ -324,11 +400,17 @@ export const Proxy: React.FC = () => {
                         <span className="text-gray-400">Dernière vérification:</span>
                         <span className="text-gray-300">{new Date(rule.lastCheck).toLocaleString()}</span>
                       </div>
+                      {rule.middleware && rule.middleware.length > 0 && (
+                        <div className="flex justify-between">
+                          <span className="text-gray-400">Middleware:</span>
+                          <span className="text-gray-300">{rule.middleware.join(', ')}</span>
+                        </div>
+                      )}
                     </div>
 
                     <div className="flex space-x-2">
                       <button
-                        onClick={() => handleTestRule(rule.id)}
+                        onClick={() => handleTestRule(rule)}
                         disabled={isLoading}
                         className="flex-1 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 text-white py-2 px-3 rounded-md transition-colors duration-200 flex items-center justify-center space-x-1"
                       >
@@ -351,9 +433,10 @@ export const Proxy: React.FC = () => {
                         )}
                       </button>
                       <button
+                        onClick={() => setRuleModal({ isOpen: true, rule })}
                         className="bg-gray-600 hover:bg-gray-700 text-white py-2 px-3 rounded-md transition-colors duration-200"
                       >
-                        <Settings className="h-4 w-4" />
+                        <Edit className="h-4 w-4" />
                       </button>
                       {!rule.autoGenerated && (
                         <button
@@ -372,6 +455,15 @@ export const Proxy: React.FC = () => {
           </div>
         )}
       </div>
+
+      {/* Proxy Rule Modal */}
+      <ProxyRuleModal
+        isOpen={ruleModal.isOpen}
+        onClose={() => setRuleModal({ isOpen: false })}
+        rule={ruleModal.rule}
+        onSave={handleSaveRule}
+        onTest={handleTestRule}
+      />
     </div>
   );
 };

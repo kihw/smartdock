@@ -14,11 +14,14 @@ import {
   Activity,
   Container,
   Network,
-  HardDrive
+  HardDrive,
+  Eye,
+  Plus
 } from 'lucide-react';
 import { useApi, useApiMutation } from '../hooks/useApi';
 import { useNotifications } from '../utils/notifications';
 import { LoadingSpinner, LoadingOverlay } from '../components/LoadingSpinner';
+import { StackDetailsModal } from '../components/StackDetailsModal';
 import { Stack } from '../types';
 
 const statusColors = {
@@ -35,6 +38,10 @@ const statusIcons = {
 
 export const Stacks: React.FC = () => {
   const [selectedStacks, setSelectedStacks] = useState<string[]>([]);
+  const [detailsModal, setDetailsModal] = useState<{
+    isOpen: boolean;
+    stack?: Stack | null;
+  }>({ isOpen: false });
 
   const { data: stacks, loading, error, refetch } = useApi<Stack[]>('/stacks');
   const { success, error: notifyError } = useNotifications();
@@ -81,6 +88,9 @@ export const Stacks: React.FC = () => {
           });
           success('Stack redémarrée', `${stack.name} a été redémarrée`);
           break;
+        case 'details':
+          setDetailsModal({ isOpen: true, stack });
+          return;
         default:
           console.log(`Action ${action} not implemented for stacks`);
           return;
@@ -94,6 +104,11 @@ export const Stacks: React.FC = () => {
       const errorMessage = error instanceof Error ? error.message : 'Erreur inconnue';
       notifyError('Erreur', `Impossible d'exécuter l'action: ${errorMessage}`);
     }
+  };
+
+  const handleStackDetailsAction = (action: string, serviceId?: string) => {
+    console.log('Stack details action:', action, serviceId);
+    // Implement service-specific actions here
   };
 
   if (loading) {
@@ -123,12 +138,17 @@ export const Stacks: React.FC = () => {
       <div className="text-center py-12">
         <Layers className="h-12 w-12 text-gray-400 mx-auto mb-4" />
         <div className="text-gray-400 mb-4">Aucune stack trouvée</div>
-        <button 
-          onClick={() => refetch().catch(console.error)}
-          className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md transition-colors duration-200"
-        >
-          Actualiser
-        </button>
+        <div className="space-x-3">
+          <button className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md transition-colors duration-200">
+            Importer Stack
+          </button>
+          <button 
+            onClick={() => refetch().catch(console.error)}
+            className="bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded-md transition-colors duration-200"
+          >
+            Actualiser
+          </button>
+        </div>
       </div>
     );
   }
@@ -149,9 +169,55 @@ export const Stacks: React.FC = () => {
             <span>Importer Stack</span>
           </button>
           <button className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-md transition-colors duration-200 flex items-center space-x-2">
-            <Layers className="h-4 w-4" />
+            <Plus className="h-4 w-4" />
             <span>Nouvelle Stack</span>
           </button>
+        </div>
+      </div>
+
+      {/* Stats rapides */}
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <div className="bg-gray-800 rounded-lg border border-gray-700 p-4">
+          <div className="flex items-center">
+            <Layers className="h-5 w-5 text-blue-400 mr-2" />
+            <div>
+              <div className="text-2xl font-bold text-white">{stacks.length}</div>
+              <div className="text-sm text-gray-400">Stacks Totales</div>
+            </div>
+          </div>
+        </div>
+        <div className="bg-gray-800 rounded-lg border border-gray-700 p-4">
+          <div className="flex items-center">
+            <Activity className="h-5 w-5 text-green-400 mr-2" />
+            <div>
+              <div className="text-2xl font-bold text-white">
+                {stacks.filter(s => s.status === 'running').length}
+              </div>
+              <div className="text-sm text-gray-400">En cours</div>
+            </div>
+          </div>
+        </div>
+        <div className="bg-gray-800 rounded-lg border border-gray-700 p-4">
+          <div className="flex items-center">
+            <Container className="h-5 w-5 text-purple-400 mr-2" />
+            <div>
+              <div className="text-2xl font-bold text-white">
+                {stacks.reduce((acc, s) => acc + s.totalServices, 0)}
+              </div>
+              <div className="text-sm text-gray-400">Services</div>
+            </div>
+          </div>
+        </div>
+        <div className="bg-gray-800 rounded-lg border border-gray-700 p-4">
+          <div className="flex items-center">
+            <GitBranch className="h-5 w-5 text-orange-400 mr-2" />
+            <div>
+              <div className="text-2xl font-bold text-white">
+                {stacks.filter(s => s.autoUpdate).length}
+              </div>
+              <div className="text-sm text-gray-400">Auto-Update</div>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -187,6 +253,12 @@ export const Stacks: React.FC = () => {
                         <div className="flex items-center space-x-2 mb-2">
                           <Layers className="h-6 w-6 text-blue-400" />
                           <h3 className="text-xl font-semibold text-white">{stack.name}</h3>
+                          <button
+                            onClick={() => handleAction('details', stack.id)}
+                            className="text-gray-400 hover:text-white transition-colors"
+                          >
+                            <Eye className="h-4 w-4" />
+                          </button>
                         </div>
                         <p className="text-gray-400 text-sm mb-3">{stack.description}</p>
                         
@@ -234,10 +306,33 @@ export const Stacks: React.FC = () => {
                       </div>
                       <div className="flex items-center justify-between text-sm mt-1">
                         <span className="text-gray-400">Dernier déploiement:</span>
-                        <span className="text-gray-300">{stack.lastDeploy}</span>
+                        <span className="text-gray-300">{new Date(stack.lastDeploy).toLocaleDateString()}</span>
                       </div>
                     </div>
                   )}
+
+                  {/* Services Preview */}
+                  <div className="mb-4">
+                    <div className="text-xs text-gray-400 mb-2">Services:</div>
+                    <div className="grid grid-cols-2 gap-2">
+                      {stack.services.slice(0, 4).map((service) => (
+                        <div key={service.id} className="bg-gray-700 rounded p-2">
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs text-white truncate">{service.name}</span>
+                            <div className={`w-2 h-2 rounded-full ${
+                              service.status === 'running' ? 'bg-green-400' : 'bg-red-400'
+                            }`} />
+                          </div>
+                          <div className="text-xs text-gray-400 truncate">{service.image}</div>
+                        </div>
+                      ))}
+                      {stack.services.length > 4 && (
+                        <div className="bg-gray-700 rounded p-2 flex items-center justify-center">
+                          <span className="text-xs text-gray-400">+{stack.services.length - 4} autres</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
 
                   <div className="grid grid-cols-4 gap-2 mb-4">
                     {stack.status === 'running' ? (
@@ -334,6 +429,14 @@ export const Stacks: React.FC = () => {
           </div>
         </motion.div>
       )}
+
+      {/* Stack Details Modal */}
+      <StackDetailsModal
+        isOpen={detailsModal.isOpen}
+        onClose={() => setDetailsModal({ isOpen: false })}
+        stack={detailsModal.stack}
+        onAction={handleStackDetailsAction}
+      />
     </div>
   );
 };
