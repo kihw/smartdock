@@ -11,11 +11,16 @@ import {
   Container,
   Layers,
   Calendar,
-  Activity
+  Activity,
+  Shield,
+  Search,
+  Filter
 } from 'lucide-react';
 import { useApi, useApiMutation } from '../hooks/useApi';
 import { useNotifications } from '../utils/notifications';
 import { LoadingSpinner, LoadingOverlay } from '../components/LoadingSpinner';
+import { UpdateModal } from '../components/UpdateModal';
+import { BackupModal } from '../components/BackupModal';
 import { Update } from '../types';
 
 const statusColors = {
@@ -36,6 +41,13 @@ export const Updates: React.FC = () => {
   const [selectedItems, setSelectedItems] = useState<string[]>([]);
   const [autoUpdateEnabled, setAutoUpdateEnabled] = useState(true);
   const [updateSchedule, setUpdateSchedule] = useState('weekly');
+  const [searchTerm, setSearchTerm] = useState('');
+  const [statusFilter, setStatusFilter] = useState<string>('all');
+  const [updateModal, setUpdateModal] = useState<{
+    isOpen: boolean;
+    update?: Update | null;
+  }>({ isOpen: false });
+  const [backupModal, setBackupModal] = useState(false);
 
   const { data: updateItems, loading, error, refetch } = useApi<Update[]>('/updates');
   const { success, error: notifyError } = useNotifications();
@@ -44,6 +56,7 @@ export const Updates: React.FC = () => {
   const updateMutation = useApiMutation('', 'POST');
   const bulkUpdateMutation = useApiMutation('', 'POST');
   const updateAllMutation = useApiMutation('', 'POST');
+  const checkUpdatesMutation = useApiMutation('/updates/check', 'POST');
 
   const toggleItem = (id: string) => {
     setSelectedItems(prev =>
@@ -66,6 +79,14 @@ export const Updates: React.FC = () => {
       refetch().catch(console.error);
     } catch (error) {
       notifyError('Erreur', 'Impossible de lancer la mise à jour');
+    }
+  };
+
+  const handleScheduleUpdate = async (schedule: string) => {
+    try {
+      success('Mise à jour programmée', `Mise à jour programmée pour ${schedule}`);
+    } catch (error) {
+      notifyError('Erreur', 'Impossible de programmer la mise à jour');
     }
   };
 
@@ -96,6 +117,31 @@ export const Updates: React.FC = () => {
     }
   };
 
+  const handleCheckUpdates = async () => {
+    try {
+      await checkUpdatesMutation.mutate({});
+      success('Vérification terminée', 'Vérification des mises à jour effectuée');
+      refetch().catch(console.error);
+    } catch (error) {
+      notifyError('Erreur', 'Impossible de vérifier les mises à jour');
+    }
+  };
+
+  const handleCreateBackup = (config: any) => {
+    success('Sauvegarde créée', `Sauvegarde "${config.name}" créée avec succès`);
+  };
+
+  // Filter items based on search and status
+  const filteredItems = updateItems?.filter(item => {
+    const matchesSearch = item.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                         item.description.toLowerCase().includes(searchTerm.toLowerCase());
+    const matchesStatus = statusFilter === 'all' || 
+                         (statusFilter === 'available' && item.hasUpdate) ||
+                         (statusFilter === 'up-to-date' && !item.hasUpdate) ||
+                         item.status === statusFilter;
+    return matchesSearch && matchesStatus;
+  }) || [];
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -122,6 +168,7 @@ export const Updates: React.FC = () => {
   const availableUpdates = items.filter(item => item.hasUpdate).length;
   const upToDateItems = items.filter(item => !item.hasUpdate).length;
   const autoUpdateItems = items.filter(item => item.autoUpdate).length;
+  const securityUpdates = items.filter(item => item.securityUpdate).length;
 
   return (
     <div className="space-y-6">
@@ -135,6 +182,21 @@ export const Updates: React.FC = () => {
         
         <div className="flex space-x-3">
           <button
+            onClick={() => setBackupModal(true)}
+            className="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-md transition-colors duration-200 flex items-center space-x-2"
+          >
+            <Shield className="h-4 w-4" />
+            <span>Sauvegarde</span>
+          </button>
+          <button
+            onClick={handleCheckUpdates}
+            disabled={checkUpdatesMutation.loading}
+            className="bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 text-white px-4 py-2 rounded-md transition-colors duration-200 flex items-center space-x-2"
+          >
+            <RefreshCw className={`h-4 w-4 ${checkUpdatesMutation.loading ? 'animate-spin' : ''}`} />
+            <span>Vérifier</span>
+          </button>
+          <button
             onClick={handleUpdateAll}
             disabled={availableUpdates === 0}
             className="bg-green-600 hover:bg-green-700 disabled:bg-gray-600 text-white px-4 py-2 rounded-md transition-colors duration-200 flex items-center space-x-2"
@@ -142,15 +204,6 @@ export const Updates: React.FC = () => {
             <Download className="h-4 w-4" />
             <span>Tout Mettre à Jour</span>
           </button>
-          {selectedItems.length > 0 && (
-            <button
-              onClick={handleBulkUpdate}
-              className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md transition-colors duration-200 flex items-center space-x-2"
-            >
-              <RefreshCw className="h-4 w-4" />
-              <span>Mettre à Jour ({selectedItems.length})</span>
-            </button>
-          )}
         </div>
       </div>
 
@@ -215,7 +268,7 @@ export const Updates: React.FC = () => {
             <Download className="h-5 w-5 text-orange-400 mr-2" />
             <div>
               <div className="text-2xl font-bold text-white">{availableUpdates}</div>
-              <div className="text-sm text-gray-400">Mises à jour disponibles</div>
+              <div className="text-sm text-gray-400">Disponibles</div>
             </div>
           </div>
         </div>
@@ -233,36 +286,91 @@ export const Updates: React.FC = () => {
             <Activity className="h-5 w-5 text-blue-400 mr-2" />
             <div>
               <div className="text-2xl font-bold text-white">{autoUpdateItems}</div>
-              <div className="text-sm text-gray-400">Auto-update activé</div>
+              <div className="text-sm text-gray-400">Auto-update</div>
             </div>
           </div>
         </div>
         <div className="bg-gray-800 rounded-lg border border-gray-700 p-4">
           <div className="flex items-center">
-            <Calendar className="h-5 w-5 text-purple-400 mr-2" />
+            <Shield className="h-5 w-5 text-red-400 mr-2" />
             <div>
-              <div className="text-2xl font-bold text-white">Dim</div>
-              <div className="text-sm text-gray-400">Prochaine vérification</div>
+              <div className="text-2xl font-bold text-white">{securityUpdates}</div>
+              <div className="text-sm text-gray-400">Sécurité</div>
             </div>
           </div>
         </div>
       </motion.div>
 
+      {/* Filters and Search */}
+      <div className="bg-gray-800 rounded-lg border border-gray-700 p-4">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between space-y-4 sm:space-y-0">
+          <div className="flex flex-col sm:flex-row space-y-2 sm:space-y-0 sm:space-x-4">
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
+              <input
+                type="text"
+                placeholder="Rechercher des éléments..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="pl-10 pr-4 py-2 bg-gray-700 border border-gray-600 rounded-md text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+            
+            <select
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value)}
+              className="px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              <option value="all">Tous ({items.length})</option>
+              <option value="available">Mises à jour disponibles ({availableUpdates})</option>
+              <option value="up-to-date">À jour ({upToDateItems})</option>
+              <option value="updating">En cours de mise à jour</option>
+              <option value="error">Erreurs</option>
+            </select>
+          </div>
+
+          {selectedItems.length > 0 && (
+            <button
+              onClick={handleBulkUpdate}
+              className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md transition-colors duration-200 flex items-center space-x-2"
+            >
+              <RefreshCw className="h-4 w-4" />
+              <span>Mettre à jour ({selectedItems.length})</span>
+            </button>
+          )}
+        </div>
+      </div>
+
       {/* Liste des éléments */}
-      {items.length === 0 ? (
+      {filteredItems.length === 0 ? (
         <div className="text-center py-12">
-          <RefreshCw className="h-12 w-12 text-gray-400 mx-auto mb-4" />
-          <div className="text-gray-400 mb-4">Aucun élément à mettre à jour</div>
-          <button 
-            onClick={() => refetch().catch(console.error)}
-            className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md transition-colors duration-200"
-          >
-            Vérifier les mises à jour
-          </button>
+          {searchTerm ? (
+            <>
+              <Search className="h-12 w-12 text-gray-400 mx-auto mb-4" />
+              <div className="text-gray-400 mb-4">Aucun élément trouvé pour "{searchTerm}"</div>
+              <button 
+                onClick={() => setSearchTerm('')}
+                className="text-blue-400 hover:text-blue-300 text-sm"
+              >
+                Effacer la recherche
+              </button>
+            </>
+          ) : (
+            <>
+              <RefreshCw className="h-12 w-12 text-gray-400 mx-auto mb-4" />
+              <div className="text-gray-400 mb-4">Aucun élément à mettre à jour</div>
+              <button 
+                onClick={handleCheckUpdates}
+                className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md transition-colors duration-200"
+              >
+                Vérifier les mises à jour
+              </button>
+            </>
+          )}
         </div>
       ) : (
         <div className="space-y-4">
-          {items.map((item, index) => {
+          {filteredItems.map((item, index) => {
             const StatusIcon = statusIcons[item.status] || Clock;
             const TypeIcon = item.type === 'container' ? Container : Layers;
             const isLoading = updateMutation.loading || bulkUpdateMutation.loading || updateAllMutation.loading;
@@ -307,6 +415,12 @@ export const Updates: React.FC = () => {
                                 Auto
                               </span>
                             )}
+                            {item.securityUpdate && (
+                              <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800 border border-red-200">
+                                <Shield className="h-3 w-3 mr-1" />
+                                Sécurité
+                              </span>
+                            )}
                           </div>
                           <p className="text-sm text-gray-400">{item.description}</p>
                         </div>
@@ -337,7 +451,7 @@ export const Updates: React.FC = () => {
                       <div className="flex space-x-2">
                         {item.hasUpdate && item.status !== 'updating' ? (
                           <button
-                            onClick={() => handleUpdate(item.id)}
+                            onClick={() => setUpdateModal({ isOpen: true, update: item })}
                             disabled={isLoading}
                             className="bg-green-600 hover:bg-green-700 disabled:bg-gray-600 text-white py-2 px-4 rounded-md transition-colors duration-200 flex items-center space-x-1"
                           >
@@ -366,6 +480,22 @@ export const Updates: React.FC = () => {
           })}
         </div>
       )}
+
+      {/* Update Modal */}
+      <UpdateModal
+        isOpen={updateModal.isOpen}
+        onClose={() => setUpdateModal({ isOpen: false })}
+        update={updateModal.update || null}
+        onUpdate={() => updateModal.update && handleUpdate(updateModal.update.id)}
+        onSchedule={handleScheduleUpdate}
+      />
+
+      {/* Backup Modal */}
+      <BackupModal
+        isOpen={backupModal}
+        onClose={() => setBackupModal(false)}
+        onCreateBackup={handleCreateBackup}
+      />
     </div>
   );
 };

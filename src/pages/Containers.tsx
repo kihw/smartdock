@@ -9,13 +9,17 @@ import {
   Filter,
   Search,
   Grid,
-  List
+  List,
+  Eye,
+  Settings,
+  Trash2
 } from 'lucide-react';
 import { useApi, useApiMutation } from '../hooks/useApi';
 import { useNotifications } from '../utils/notifications';
 import { LoadingSpinner } from '../components/LoadingSpinner';
 import { SmartWakeUpModal } from '../components/SmartWakeUpModal';
 import { ContainerCard } from '../components/ContainerCard';
+import { ContainerDetailsModal } from '../components/ContainerDetailsModal';
 import { QuickActions, containerActions } from '../components/QuickActions';
 import { Container as ContainerType } from '../types';
 
@@ -28,6 +32,10 @@ export const Containers: React.FC = () => {
     isOpen: boolean;
     container?: ContainerType;
   }>({ isOpen: false });
+  const [detailsModal, setDetailsModal] = useState<{
+    isOpen: boolean;
+    container?: ContainerType;
+  }>({ isOpen: false });
 
   const { data: containers, loading, error, refetch } = useApi<ContainerType[]>('/containers');
   const { success, error: notifyError } = useNotifications();
@@ -36,6 +44,7 @@ export const Containers: React.FC = () => {
   const startMutation = useApiMutation('', 'POST');
   const stopMutation = useApiMutation('', 'POST');
   const restartMutation = useApiMutation('', 'POST');
+  const removeMutation = useApiMutation('', 'DELETE');
 
   const toggleContainer = (id: string) => {
     setSelectedContainers(prev =>
@@ -74,8 +83,19 @@ export const Containers: React.FC = () => {
           });
           success('Conteneur redémarré', `${container.name} a été redémarré`);
           break;
+        case 'remove':
+          if (window.confirm(`Êtes-vous sûr de vouloir supprimer le conteneur ${container.name} ?`)) {
+            await removeMutation.mutate(undefined, { 
+              url: `/containers/${containerId}` 
+            });
+            success('Conteneur supprimé', `${container.name} a été supprimé`);
+          }
+          break;
         case 'smart-wakeup':
           setWakeUpModal({ isOpen: true, container });
+          return;
+        case 'details':
+          setDetailsModal({ isOpen: true, container });
           return;
         default:
           console.log(`Action ${action} not implemented`);
@@ -89,6 +109,32 @@ export const Containers: React.FC = () => {
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Erreur inconnue';
       notifyError('Erreur', `Impossible d'exécuter l'action: ${errorMessage}`);
+    }
+  };
+
+  const handleBulkAction = async (action: string) => {
+    if (selectedContainers.length === 0) return;
+
+    try {
+      const promises = selectedContainers.map(id => {
+        switch (action) {
+          case 'start':
+            return startMutation.mutate(undefined, { url: `/containers/${id}/start` });
+          case 'stop':
+            return stopMutation.mutate(undefined, { url: `/containers/${id}/stop` });
+          case 'restart':
+            return restartMutation.mutate(undefined, { url: `/containers/${id}/restart` });
+          default:
+            return Promise.resolve();
+        }
+      });
+
+      await Promise.all(promises);
+      success('Action groupée', `${action} exécuté sur ${selectedContainers.length} conteneurs`);
+      setSelectedContainers([]);
+      refetch().catch(console.error);
+    } catch (error) {
+      notifyError('Erreur', 'Impossible d\'exécuter l\'action groupée');
     }
   };
 
@@ -180,6 +226,48 @@ export const Containers: React.FC = () => {
         </div>
       </div>
 
+      {/* Stats rapides */}
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <div className="bg-gray-800 rounded-lg border border-gray-700 p-4">
+          <div className="flex items-center">
+            <Container className="h-5 w-5 text-blue-400 mr-2" />
+            <div>
+              <div className="text-2xl font-bold text-white">{containers.length}</div>
+              <div className="text-sm text-gray-400">Total</div>
+            </div>
+          </div>
+        </div>
+        <div className="bg-gray-800 rounded-lg border border-gray-700 p-4">
+          <div className="flex items-center">
+            <Play className="h-5 w-5 text-green-400 mr-2" />
+            <div>
+              <div className="text-2xl font-bold text-white">{statusCounts.running || 0}</div>
+              <div className="text-sm text-gray-400">En cours</div>
+            </div>
+          </div>
+        </div>
+        <div className="bg-gray-800 rounded-lg border border-gray-700 p-4">
+          <div className="flex items-center">
+            <Square className="h-5 w-5 text-red-400 mr-2" />
+            <div>
+              <div className="text-2xl font-bold text-white">{statusCounts.stopped || statusCounts.exited || 0}</div>
+              <div className="text-sm text-gray-400">Arrêtés</div>
+            </div>
+          </div>
+        </div>
+        <div className="bg-gray-800 rounded-lg border border-gray-700 p-4">
+          <div className="flex items-center">
+            <Settings className="h-5 w-5 text-purple-400 mr-2" />
+            <div>
+              <div className="text-2xl font-bold text-white">
+                {containers.filter(c => c.smartWakeUp).length}
+              </div>
+              <div className="text-sm text-gray-400">Smart Wake-Up</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
       {/* Filters and Search */}
       <div className="bg-gray-800 rounded-lg border border-gray-700 p-4">
         <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between space-y-4 lg:space-y-0">
@@ -248,7 +336,7 @@ export const Containers: React.FC = () => {
                   icon: Play,
                   color: 'bg-green-600',
                   hoverColor: 'hover:bg-green-700',
-                  action: () => console.log('Start selected containers')
+                  action: () => handleBulkAction('start')
                 },
                 {
                   id: 'stop-selected',
@@ -256,7 +344,7 @@ export const Containers: React.FC = () => {
                   icon: Square,
                   color: 'bg-red-600',
                   hoverColor: 'hover:bg-red-700',
-                  action: () => console.log('Stop selected containers')
+                  action: () => handleBulkAction('stop')
                 },
                 {
                   id: 'restart-selected',
@@ -264,7 +352,7 @@ export const Containers: React.FC = () => {
                   icon: RotateCcw,
                   color: 'bg-orange-600',
                   hoverColor: 'hover:bg-orange-700',
-                  action: () => console.log('Restart selected containers')
+                  action: () => handleBulkAction('restart')
                 }
               ]}
               layout="horizontal"
@@ -281,14 +369,33 @@ export const Containers: React.FC = () => {
           : 'space-y-4'
       }>
         {filteredContainers.map((container, index) => (
-          <ContainerCard
-            key={container.id}
-            container={container}
-            isSelected={selectedContainers.includes(container.id)}
-            isLoading={startMutation.loading || stopMutation.loading || restartMutation.loading}
-            onToggleSelect={() => toggleContainer(container.id)}
-            onAction={(action) => handleAction(action, container.id)}
-          />
+          <div key={container.id} className="relative">
+            <ContainerCard
+              container={container}
+              isSelected={selectedContainers.includes(container.id)}
+              isLoading={startMutation.loading || stopMutation.loading || restartMutation.loading}
+              onToggleSelect={() => toggleContainer(container.id)}
+              onAction={(action) => handleAction(action, container.id)}
+            />
+            
+            {/* Additional action buttons */}
+            <div className="absolute top-2 right-2 flex space-x-1 opacity-0 group-hover:opacity-100 transition-opacity">
+              <button
+                onClick={() => handleAction('details', container.id)}
+                className="bg-gray-700 hover:bg-gray-600 text-white p-1 rounded"
+                title="Voir les détails"
+              >
+                <Eye className="h-3 w-3" />
+              </button>
+              <button
+                onClick={() => handleAction('remove', container.id)}
+                className="bg-red-700 hover:bg-red-600 text-white p-1 rounded"
+                title="Supprimer"
+              >
+                <Trash2 className="h-3 w-3" />
+              </button>
+            </div>
+          </div>
         ))}
       </div>
 
@@ -312,6 +419,14 @@ export const Containers: React.FC = () => {
         containerName={wakeUpModal.container?.name || ''}
         domain={`${wakeUpModal.container?.name}.example.com`}
         onWakeUp={handleSmartWakeUp}
+      />
+
+      {/* Container Details Modal */}
+      <ContainerDetailsModal
+        isOpen={detailsModal.isOpen}
+        onClose={() => setDetailsModal({ isOpen: false })}
+        container={detailsModal.container || null}
+        onAction={(action) => handleAction(action, detailsModal.container?.id)}
       />
     </div>
   );
